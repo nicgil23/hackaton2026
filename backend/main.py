@@ -12,20 +12,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Carga de datos de Daphnet
+# ==========================================
+# CARGA DE DATOS DEL PACIENTE
+# ==========================================
 try:
     file_path = "data/dataset_fog_release/dataset_fog_release/S01R01.txt"
-    
     if os.path.exists(file_path):
         print("Cargando datos del acelerómetro...")
-        df = pd.read_csv(file_path, sep='\s+', header=None)
+        # La 'r' antes de las comillas quita el SyntaxWarning
+        df = pd.read_csv(file_path, sep=r'\s+', header=None)
         
         # Filtrar label 0 (sin anotar)
         df = df[df[10] != 0]
         
-        # Columnas: [acc_x (1), acc_y (2), acc_z (3), label (10)]
         sensor_data = df.iloc[:, [1, 2, 3, 10]].values.tolist()
-        print(f"Total lecturas: {len(sensor_data)}")
+        print(f"Total lecturas listas: {len(sensor_data)}")
     else:
         sensor_data = []
         print("Aviso: Ejecuta primero download_data.py")
@@ -33,6 +34,9 @@ except Exception as e:
     print(f"Error: {e}")
     sensor_data = []
 
+# ==========================================
+# LÓGICA DEL SERVIDOR Y ENDPOINT
+# ==========================================
 current_index = 0
 
 @app.get("/sensor-stream")
@@ -47,9 +51,14 @@ def stream_data():
     
     acc_x, acc_y, acc_z, label = row
     
-    # Lógica de Resonancia Estocástica
-    # label 2 = Freezing of Gait
+    # label 2 = Freezing of Gait (Congelación)
     es_congelacion = (label == 2)
+    
+    # 🚨 TRUCO DE HACKATHON PARA PROBAR LOS ESTÍMULOS RÁPIDO 🚨
+    # Forzamos una congelación falsa a los 10 segundos (50 peticiones) para no esperar
+    if current_index > 50 and current_index < 100:
+        es_congelacion = True
+
     intensidad_ruido = 0.8 if es_congelacion else 0.05
     
     return {

@@ -1,97 +1,129 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+
+let audioCtx = null;
 
 function App() {
   const [data, setData] = useState([]);
   const [estado, setEstado] = useState("Caminando Normal");
   const [isFreezing, setIsFreezing] = useState(false);
+  const [flashScreen, setFlashScreen] = useState(false); 
+  
+  const isStimulating = useRef(false);
+
+  // --- FUNCIÓN MAESTRA DE ESTÍMULOS ---
+  const triggerMobileStimuli = (force = false) => {
+    // Si ya está sonando y no es un "force", salimos
+    if (isStimulating.current && !force) return;
+    
+    isStimulating.current = true;
+    console.log("¡ESTÍMULOS ACTIVADOS!");
+
+    // 1. VIBRACIÓN (Patrón de pulso fuerte)
+    if (navigator.vibrate) {
+      navigator.vibrate([500, 200, 500, 200, 500, 200, 500]); 
+    }
+
+    // 2. SONIDO (Onda cuadrada para que se oiga bien)
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = 432;
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 3);
+    setTimeout(() => osc.stop(), 3000);
+
+    // 3. PANTALLA (Fogonazos rojos/blancos)
+    let count = 0;
+    const interval = setInterval(() => {
+      setFlashScreen(prev => !prev);
+      count++;
+      if (count >= 20) {
+        clearInterval(interval);
+        setFlashScreen(false);
+        // Permitimos otra activación tras 3 segundos
+        setTimeout(() => { isStimulating.current = false; }, 3000);
+      }
+    }, 100);
+  };
 
   useEffect(() => {
-    // Bajamos el intervalo a 200ms para que la gráfica fluya más rápido y se vea el temblor
-    const interval = setInterval(() => {
-      fetch("http://localhost:8000/sensor-stream")
+    const timer = setInterval(() => {
+      fetch("http://172.20.10.2:8000/sensor-stream")
         .then(res => res.json())
         .then(newData => {
-          setData(prev => {
-            // Guardamos un historial de los últimos 60 puntos
-            const updated = [...prev, { time: new Date().toLocaleTimeString().split(" ")[0], ...newData }];
-            return updated.slice(-60); 
-          });
-          
+          setData(prev => [...prev, { time: new Date().toLocaleTimeString().split(" ")[0], ...newData }].slice(-60));
           setIsFreezing(newData.is_freezing);
-          setEstado(newData.is_freezing ? "PELIGRO: CONGELACIÓN DETECTADA" : "Caminando Normal");
-        })
-        .catch(err => console.log("Esperando al backend..."));
-    }, 200);
+          setEstado(newData.is_freezing ? "PELIGRO: CONGELACIÓN" : "Caminando Normal");
 
-    return () => clearInterval(interval);
+          // Si el servidor detecta FOG real, dispara
+          if (newData.is_freezing) {
+            triggerMobileStimuli(false);
+          }
+        })
+        .catch(e => console.log("Reconectando..."));
+    }, 200);
+    return () => clearInterval(timer);
   }, []);
 
   return (
-    <div style={{ backgroundColor: '#121212', color: '#ffffff', minHeight: '100vh', padding: '30px', fontFamily: 'Arial, sans-serif' }}>
+    <div style={{ 
+      backgroundColor: flashScreen ? '#ff0000' : '#121212', 
+      minHeight: '100vh', padding: '20px', transition: 'background-color 0.05s' 
+    }}>
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <div>
-          <h1 style={{ margin: 0, color: '#8884d8' }}>DeepResonance AI</h1>
-          <p style={{ margin: 0, color: '#aaaaaa' }}>Monitorización en tiempo real - Paciente S01</p>
-        </div>
-        
-        {/* Cartel dinámico que cambia de color si hay congelación */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+        <h1 style={{ color: '#8884d8', margin: 0 }}>DeepResonance AI</h1>
         <div style={{ 
           backgroundColor: isFreezing ? '#ff4d4d' : '#2e7d32', 
-          padding: '15px 30px', 
-          borderRadius: '8px',
-          fontWeight: 'bold',
-          fontSize: '1.2rem',
-          boxShadow: isFreezing ? '0 0 20px rgba(255, 77, 77, 0.6)' : 'none',
-          transition: 'all 0.3s ease'
+          padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', color: 'white'
         }}>
-          ESTADO: {estado}
+          {estado}
         </div>
       </div>
 
-      <div style={{ backgroundColor: '#1e1e1e', padding: '20px', borderRadius: '12px', height: '60vh', boxShadow: '0 4px 6px rgba(0,0,0,0.3)' }}>
+      <div style={{ backgroundColor: '#1e1e1e', borderRadius: '12px', height: '50vh', padding: '10px' }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-            <XAxis dataKey="time" stroke="#888" tick={{fontSize: 12}} />
-            
-            {/* EJE IZQUIERDO: Para la aceleración del paciente */}
-            <YAxis yAxisId="left" domain={['auto', 'auto']} stroke="#8884d8" name="Movimiento" />
-            
-            {/* EJE DERECHO: Para el ruido estocástico de la IA */}
+            <CartesianGrid stroke="#333" />
+            <XAxis dataKey="time" hide />
+            <YAxis yAxisId="left" domain={['auto', 'auto']} stroke="#8884d8" />
             <YAxis yAxisId="right" orientation="right" domain={[0, 1]} stroke="#82ca9d" />
-            
-            <Tooltip contentStyle={{ backgroundColor: '#333', border: 'none', color: '#fff' }} />
-            <Legend verticalAlign="top" height={36}/>
-            
-            {/* isAnimationActive={false} es clave para que no tenga "lag" visual */}
-            <Line 
-              yAxisId="left" 
-              type="monotone" 
-              dataKey="acc_x" 
-              stroke="#8884d8" 
-              strokeWidth={3} 
-              dot={false} 
-              name="Señal Motora (Acelerómetro)" 
-              isAnimationActive={false} 
-            />
-            
-            <Line 
-              yAxisId="right" 
-              type="stepAfter" 
-              dataKey="noise_d" 
-              stroke="#82ca9d" 
-              strokeWidth={2} 
-              dot={false} 
-              name="Inyección de Ruido (Terapia)" 
-              isAnimationActive={false} 
-            />
+            <Line yAxisId="left" type="monotone" dataKey="acc_x" stroke="#8884d8" dot={false} isAnimationActive={false} strokeWidth={3} />
+            <Line yAxisId="right" type="stepAfter" dataKey="noise_d" stroke="#82ca9d" dot={false} isAnimationActive={false} />
           </LineChart>
         </ResponsiveContainer>
       </div>
+      
+      {/* EL BOTÓN MÁGICO */}
+      <div style={{ textAlign: 'center', marginTop: '30px' }}>
+        <button 
+          onClick={() => triggerMobileStimuli(true)} 
+          style={{
+            padding: '25px 50px', 
+            borderRadius: '50px', 
+            background: 'linear-gradient(45deg, #ff0000, #ffaa00)', 
+            color: 'white', 
+            fontSize: '1.5rem', 
+            fontWeight: 'bold',
+            border: 'none',
+            boxShadow: '0 10px 20px rgba(255,0,0,0.3)',
+            cursor: 'pointer'
+          }}>
+          🔥 PROBAR ESTÍMULOS AHORA 🔥
+        </button>
+        <p style={{ color: '#666', marginTop: '10px' }}>
+          Pulsa para simular una respuesta inmediata ante una congelación.
+        </p>
+      </div>
+
     </div>
   );
 }
