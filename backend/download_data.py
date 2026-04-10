@@ -1,25 +1,37 @@
 import os
+import urllib.request
 
-def setup_fake_data():
+def setup_real_data():
     # Creamos la ruta de carpetas necesaria
     path = "data/dataset_fog_release/dataset_fog_release"
     os.makedirs(path, exist_ok=True)
-    
     file_path = os.path.join(path, "S01R01.txt")
     
-    print("El servidor de Daphnet esta caido (502). Generando datos simulados para la demo...")
+    # URL de un repositorio con los datos de Daphnet (S01R01)
+    # Esta es una version directa del dataset original
+    url = "https://raw.githubusercontent.com/m-v-p/Daphnet-Freezing-of-Gait-Dataset/master/dataset_fog_release/dataset_fog_release/S01R01.txt"
     
-    # Generamos 1000 lineas de datos falsos con el formato de Daphnet
-    # Estructura: Tiempo(0) Acc1(1) Acc2(2) Acc3(3) ... Label(10)
-    with open(file_path, "w") as f:
-        for i in range(1000):
-            # Simulamos una caminata normal (label 1) y de vez en cuando congelacion (label 2)
-            label = 2 if (400 < i < 600) else 1
-            # Datos: mili-g (aprox entre -2000 y 2000)
-            f.write(f"{i} 100 200 {500 + (i%50)} 0 0 0 0 0 0 {label}\n")
+    print("Conectando con el repositorio de datos reales...")
+    
+    try:
+        # Configuramos un User-Agent para que GitHub no nos bloquee la descarga automatica
+        opener = urllib.request.build_opener()
+        opener.addheaders = [('User-agent', 'Mozilla/5.0')]
+        urllib.request.install_opener(opener)
+        
+        urllib.request.urlretrieve(url, file_path)
+        
+        # Verificamos si el archivo se descargo bien y tiene contenido
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 1000:
+            print(f"Exito. Archivo real descargado: {file_path}")
+            print(f"Tamaño del archivo: {os.path.getsize(file_path) / 1024:.2f} KB")
+        else:
+            print("El archivo descargado parece estar vacio o corrupto.")
             
-    print(f"Archivo simulado creado en: {file_path}")
-    print("Ya puedes ejecutar: uv run uvicorn main:app --reload --port 8000")
+    except Exception as e:
+        print(f"Error en la descarga: {e}")
+        print("Copia este enlace en tu navegador y guarda el archivo manualmente como S01R01.txt en backend/data/dataset_fog_release/dataset_fog_release/")
+        print(url)
 
 if __name__ == "__main__":
-    setup_fake_data()
+    setup_real_data()

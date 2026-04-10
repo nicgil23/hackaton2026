@@ -53,4 +53,4 @@ cd frontend
 npm install
 
 # Inicia la aplicación web
-npm start
+npm star
