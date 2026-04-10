@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+.venv/
+venv/
+*.pyc
+.ipynb_checkpoints/
+
+# Node / React
+node_modules/
+build/
+.env
+.DS_Store
+
+# Datos (No subas el dataset pesado, que cada uno lo descargue)
+backend/data/
