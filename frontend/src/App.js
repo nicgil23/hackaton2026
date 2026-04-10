@@ -11,7 +11,49 @@ function App() {
   const [isFreezing, setIsFreezing] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false); 
   
+  // --- NUEVOS ESTADOS PARA REALIDAD AUMENTADA ---
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [forceAR, setForceAR] = useState(false); // <-- NUEVO ESTADO PARA FORZAR AR
+  const videoRef = useRef(null);
+  
   const isStimulating = useRef(false);
+
+  // --- FUNCIÓN PARA ABRIR LA CÁMARA (AR) ---
+  const toggleCamera = async () => {
+    if (!isCameraOpen) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "environment" } // Obliga a usar la cámara trasera
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setIsCameraOpen(true);
+      } catch (err) {
+        console.error("Error accediendo a la cámara:", err);
+        alert("Permiso de cámara denegado o dispositivo no compatible.");
+      }
+    } else {
+      // Apagar cámara
+      const stream = videoRef.current?.srcObject;
+      const tracks = stream?.getTracks() || [];
+      tracks.forEach(track => track.stop());
+      setIsCameraOpen(false);
+    }
+  };
+
+  // --- NUEVA FUNCIÓN PARA TESTEAR LA AR MANUALMENTE ---
+  const testARVisuals = () => {
+    if (!isCameraOpen) {
+      alert("¡Activa la cámara primero para ver la Realidad Aumentada!");
+      return;
+    }
+    setForceAR(true);
+    // Las líneas desaparecerán solas a los 4 segundos
+    setTimeout(() => {
+      setForceAR(false);
+    }, 4000);
+  };
 
   // --- FUNCIÓN MAESTRA DE ESTÍMULOS ---
   const triggerMobileStimuli = (force = false) => {
@@ -79,6 +121,26 @@ function App() {
       minHeight: '100vh', padding: '20px', transition: 'background-color 0.05s' 
     }}>
       
+      {/* --- ESTILOS CSS INYECTADOS PARA LA ANIMACIÓN AR --- */}
+      <style>
+        {`
+          @keyframes arScroll {
+            0% { transform: translateY(-100%); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateY(500%); opacity: 0; }
+          }
+          .ar-line {
+            width: 80%;
+            height: 15px;
+            background: rgba(0, 255, 0, 0.8);
+            box-shadow: 0 0 20px #00ff00;
+            margin: 20px auto;
+            border-radius: 10px;
+            animation: arScroll 2s linear infinite;
+          }
+        `}
+      </style>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
         <h1 style={{ color: '#8884d8', margin: 0 }}>DeepResonance AI</h1>
         <div style={{ 
@@ -89,7 +151,73 @@ function App() {
         </div>
       </div>
 
-      <div style={{ backgroundColor: '#1e1e1e', borderRadius: '12px', height: '50vh', padding: '10px' }}>
+      {/* --- MÓDULO DE REALIDAD AUMENTADA (CÁMARA + OVERLAY) --- */}
+      <div style={{ 
+        position: 'relative', 
+        backgroundColor: '#000', 
+        borderRadius: '12px', 
+        height: '40vh', 
+        marginBottom: '10px', 
+        overflow: 'hidden',
+        border: (isFreezing || forceAR) ? '5px solid #00ff00' : '2px solid #333'
+      }}>
+        {!isCameraOpen && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: '#666' }}>
+            Cámara AR Desactivada
+          </div>
+        )}
+        
+        {/* Etiqueta de vídeo para la cámara */}
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: isCameraOpen ? 'block' : 'none' }} 
+        />
+
+        {/* Capa holográfica estilo "Strolll" (Se activa si hay FOG real o pulsas el botón AR) */}
+        {isCameraOpen && (isFreezing || forceAR) && (
+          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', background: 'rgba(0,255,0,0.1)' }}>
+            <div className="ar-line" style={{ animationDelay: '0s' }}></div>
+            <div className="ar-line" style={{ animationDelay: '0.6s' }}></div>
+            <div className="ar-line" style={{ animationDelay: '1.2s' }}></div>
+          </div>
+        )}
+
+        {/* Botón flotante para activar/desactivar la cámara */}
+        <button 
+          onClick={toggleCamera}
+          style={{
+            position: 'absolute', bottom: '10px', right: '10px', 
+            background: isCameraOpen ? '#ff4d4d' : '#8884d8', 
+            color: 'white', border: 'none', padding: '10px 15px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold'
+          }}
+        >
+          {isCameraOpen ? 'Detener AR' : 'Activar Cámara AR'}
+        </button>
+      </div>
+
+      {/* BOTÓN TEST AR DEDICADO */}
+      <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+         <button 
+          onClick={testARVisuals}
+          style={{
+            padding: '10px 20px', 
+            borderRadius: '8px', 
+            background: '#00ff00', 
+            color: 'black', 
+            fontSize: '1rem', 
+            fontWeight: 'bold',
+            border: 'none',
+            cursor: 'pointer',
+            boxShadow: '0 4px 10px rgba(0,255,0,0.3)'
+          }}>
+          🕶️ PROBAR LÍNEAS AR
+        </button>
+      </div>
+
+      <div style={{ backgroundColor: '#1e1e1e', borderRadius: '12px', height: '35vh', padding: '10px' }}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data}>
             <CartesianGrid stroke="#333" />
@@ -102,26 +230,23 @@ function App() {
         </ResponsiveContainer>
       </div>
       
-      {/* EL BOTÓN MÁGICO */}
-      <div style={{ textAlign: 'center', marginTop: '30px' }}>
+      {/* EL BOTÓN MÁGICO DE ESTÍMULOS DE EMERGENCIA */}
+      <div style={{ textAlign: 'center', marginTop: '15px' }}>
         <button 
           onClick={() => triggerMobileStimuli(true)} 
           style={{
-            padding: '25px 50px', 
+            padding: '20px 40px', 
             borderRadius: '50px', 
             background: 'linear-gradient(45deg, #ff0000, #ffaa00)', 
             color: 'white', 
-            fontSize: '1.5rem', 
+            fontSize: '1.2rem', 
             fontWeight: 'bold',
             border: 'none',
             boxShadow: '0 10px 20px rgba(255,0,0,0.3)',
             cursor: 'pointer'
           }}>
-          🔥 PROBAR ESTÍMULOS AHORA 🔥
+          🔥 PROBAR ESTÍMULOS AUDIO/VISUALES 🔥
         </button>
-        <p style={{ color: '#666', marginTop: '10px' }}>
-          Pulsa para simular una respuesta inmediata ante una congelación.
-        </p>
       </div>
 
     </div>

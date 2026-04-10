@@ -64,5 +64,23 @@ def stream_data():
     return {
         "acc_x": acc_x / 1000.0, 
         "noise_d": intensidad_ruido,
-        "is_freezing": es_congelacion
+        "is_freezing": es_congelacion,
+        "ar_cue_type": "parallel_lines" if es_congelacion else "none" # <-- AÑADIDO
+    }
+
+# ==========================================
+# NUEVO ENDPOINT PARA CONFIGURACIÓN AR
+# ==========================================
+@app.get("/ar-config")
+def get_ar_config():
+    """
+    Endpoint añadido para gestionar futuras configuraciones de Realidad Aumentada
+    (e.g., color de las líneas, distancia, tipo de patrón geométrico) 
+    dependiendo del paciente.
+    """
+    return {
+        "status": "active",
+        "cue_color": "#00ff00",
+        "cue_speed_ms": 2000,
+        "pattern": "strolll_horizontal_lines"
     }
