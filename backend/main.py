@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import os
 
-# ESTA LÍNEA ES LA QUE FALTA O ESTÁ MAL ESCRITA:
-app = FastAPI() 
+app = FastAPI()
 
-# Configuración de CORS para que React no proteste
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -12,6 +12,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def read_root():
-    return {"status": "IA Backend Corriendo"}
+# Carga de datos de Daphnet
+try:
+    file_path = "data/dataset_fog_release/dataset_fog_release/S01R01.txt"
+    
+    if os.path.exists(file_path):
+        print("Cargando datos del acelerómetro...")
+        df = pd.read_csv(file_path, sep='\s+', header=None)
+        
+        # Filtrar label 0 (sin anotar)
+        df = df[df[10] != 0]
+        
+        # Columnas: [acc_x (1), acc_y (2), acc_z (3), label (10)]
+        sensor_data = df.iloc[:, [1, 2, 3, 10]].values.tolist()
+        print(f"Total lecturas: {len(sensor_data)}")
+    else:
+        sensor_data = []
+        print("Aviso: Ejecuta primero download_data.py")
+except Exception as e:
+    print(f"Error: {e}")
+    sensor_data = []
+
+current_index = 0
+
+@app.get("/sensor-stream")
+def stream_data():
+    global current_index
+    
+    if not sensor_data:
+        return {"error": "No hay datos cargados."}
+        
+    row = sensor_data[current_index]
+    current_index = (current_index + 1) % len(sensor_data)
+    
+    acc_x, acc_y, acc_z, label = row
+    
+    # Lógica de Resonancia Estocástica
+    # label 2 = Freezing of Gait
+    es_congelacion = (label == 2)
+    intensidad_ruido = 0.8 if es_congelacion else 0.05
+    
+    return {
+        "acc_x": acc_x / 1000.0, 
+        "noise_d": intensidad_ruido,
+        "is_freezing": es_congelacion
+    }
