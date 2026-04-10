@@ -5,15 +5,120 @@ import {
 
 let audioCtx = null;
 
+// ==========================================
+// NUEVO COMPONENTE: ESCÁNER 3D DEL ENTORNO
+// ==========================================
+// ... (Tus imports y audioCtx igual que antes)
+
+function Scanner3D({ onBack }) {
+  const videoRef3D = useRef(null);
+  const canvasRef = useRef(null);
+  const [model, setModel] = useState(null);
+  const [detected, setDetected] = useState("Cargando IA...");
+
+  // Cargar el modelo de detección de objetos
+  useEffect(() => {
+    const loadModel = async () => {
+      const loadedModel = await window.cocoSsd.load();
+      setModel(loadedModel);
+      setDetected("IA Lista. Escaneando...");
+    };
+    loadModel();
+  }, []);
+
+  useEffect(() => {
+    let requestAnim;
+    
+    const startScanner = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: "environment" } 
+        });
+        if (videoRef3D.current) videoRef3D.current.srcObject = stream;
+        
+        // Función de detección en tiempo real
+        const detectFrame = async () => {
+          if (model && videoRef3D.current && videoRef3D.current.readyState === 4) {
+            const predictions = await model.detect(videoRef3D.current);
+            
+            // Dibujar en el canvas
+            const ctx = canvasRef.current.getContext('2d');
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            predictions.forEach(prediction => {
+              if (prediction.score > 0.6) { // Solo si está seguro al 60%
+                setDetected(`Detectado: ${prediction.class.toUpperCase()}`);
+                
+                // Dibujar cuadro sobre el objeto
+                ctx.strokeStyle = "#00ffcc";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(...prediction.bbox);
+                
+                // Dibujar etiqueta
+                ctx.fillStyle = "#00ffcc";
+                ctx.fillText(prediction.class, prediction.bbox[0], prediction.bbox[1] > 10 ? prediction.bbox[1] - 5 : 10);
+              }
+            });
+          }
+          requestAnim = requestAnimationFrame(detectFrame);
+        };
+        detectFrame();
+      } catch (err) { console.error(err); }
+    };
+
+    if (model) startScanner();
+
+    return () => {
+      cancelAnimationFrame(requestAnim);
+      const stream = videoRef3D.current?.srcObject;
+      stream?.getTracks().forEach(t => t.stop());
+    };
+  }, [model]);
+
+  return (
+    <div style={{ backgroundColor: '#050510', minHeight: '100vh', padding: '10px', color: '#00ffcc', fontFamily: 'monospace' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+        <div style={{ fontSize: '0.8rem' }}>
+          STATUS: <span style={{ color: 'white' }}>{detected}</span>
+        </div>
+        <button onClick={onBack} style={{ background: '#ff4d4d', border: 'none', color: 'white', padding: '5px 15px', borderRadius: '5px' }}>SALIR</button>
+      </div>
+
+      <div style={{ position: 'relative', width: '100%', height: '80vh', border: '2px solid #00ffcc', borderRadius: '10px', overflow: 'hidden' }}>
+        <video ref={videoRef3D} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        
+        {/* Capa de dibujo de la IA */}
+        <canvas 
+          ref={canvasRef} 
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+          width={window.innerWidth}
+          height={window.innerHeight}
+        />
+
+        {/* Efecto de escaneo */}
+        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '2px', background: 'rgba(0,255,204,0.5)', boxShadow: '0 0 10px #00ffcc', animation: 'scanline 4s linear infinite' }} />
+      </div>
+    </div>
+  );
+}
+
+// ... (El resto de tu App.js se mantiene igual)
+
+// ==========================================
+// APLICACIÓN PRINCIPAL (CÓDIGO ORIGINAL)
+// ==========================================
 function App() {
   const [data, setData] = useState([]);
   const [estado, setEstado] = useState("Caminando Normal");
   const [isFreezing, setIsFreezing] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false); 
   
+  // --- NUEVO ESTADO PARA NAVEGACIÓN ---
+  const [currentView, setCurrentView] = useState("main"); // "main" o "3d"
+
   // --- NUEVOS ESTADOS PARA REALIDAD AUMENTADA ---
   const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [forceAR, setForceAR] = useState(false); // <-- NUEVO ESTADO PARA FORZAR AR
+  const [forceAR, setForceAR] = useState(false); 
   const videoRef = useRef(null);
   
   const isStimulating = useRef(false);
@@ -97,6 +202,9 @@ function App() {
   };
 
   useEffect(() => {
+    // Si estamos en la vista 3D, no hace falta consumir el stream para no saturar
+    if (currentView !== "main") return;
+
     const timer = setInterval(() => {
       fetch("http://172.20.10.2:8000/sensor-stream")
         .then(res => res.json())
@@ -113,7 +221,12 @@ function App() {
         .catch(e => console.log("Reconectando..."));
     }, 200);
     return () => clearInterval(timer);
-  }, []);
+  }, [currentView]);
+
+  // --- RENDERIZADO CONDICIONAL DE VISTAS ---
+  if (currentView === "3d") {
+    return <Scanner3D onBack={() => setCurrentView("main")} />;
+  }
 
   return (
     <div style={{ 
@@ -140,6 +253,23 @@ function App() {
           }
         `}
       </style>
+
+      {/* --- BOTÓN PARA IR AL NUEVO JS/VISTA 3D --- */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+        <button 
+          onClick={() => {
+            // Apagamos la cámara normal si está encendida antes de saltar al 3D
+            if (isCameraOpen) toggleCamera();
+            setCurrentView("3d");
+          }}
+          style={{
+            background: 'linear-gradient(90deg, #00C9FF 0%, #92FE9D 100%)',
+            color: 'black', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', boxShadow: '0 4px 15px rgba(0,201,255,0.4)'
+          }}
+        >
+          🪐 ENTRAR AL MODO ESCÁNER 3D
+        </button>
+      </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
         <h1 style={{ color: '#8884d8', margin: 0 }}>DeepResonance AI</h1>
