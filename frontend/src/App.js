@@ -17,6 +17,150 @@ import * as poseDetection from '@tensorflow-models/pose-detection';
 
 const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
+function fmtNum(v, digits = 2) {
+  if (v == null || Number.isNaN(Number(v))) return '—';
+  return Number(v).toFixed(digits);
+}
+
+function MetricsSummaryCards({ metrics }) {
+  const m = metrics?.metrics;
+  if (!m) return null;
+  const t = m.tremor || {};
+  const b = m.bradykinesia || {};
+  const r = m.rigidity || {};
+
+  const tremorLine =
+    t.dominant_frequency_hz != null
+      ? `Pico dominante ~${fmtNum(t.dominant_frequency_hz, 1)} Hz`
+      : 'Sin frecuencia dominante clara en esta toma';
+  const tremorSub =
+    t.detected === true
+      ? 'Heurística: patrón compatible con banda típica de temblor (~4–6 Hz).'
+      : 'Heurística: sin detección destacada en esta sesión.';
+
+  const bradyLine =
+    b.cycle_count != null && b.cycle_count > 0
+      ? `${b.cycle_count} ciclos de apertura/cierre detectados`
+      : 'Pocos o ningún ciclo detectado; acerca las manos a la cámara.';
+  const bradySub =
+    b.average_speed_m_s != null
+      ? `Velocidad media de la señal (escala cámara): ${fmtNum(b.average_speed_m_s, 3)} · Pendiente amplitud: ${b.amplitude_decrement_slope != null ? fmtNum(b.amplitude_decrement_slope, 4) : '—'}`
+      : null;
+
+  const rigLine =
+    r.max_rom_degrees != null
+      ? `ROM angular (brazo derecho, proxy): ${fmtNum(r.max_rom_degrees, 1)}°`
+      : 'ROM no estimado';
+  const rigSub =
+    r.rms_jerk != null
+      ? `Jerk RMS (suavidad): ${fmtNum(r.rms_jerk, 2)} — valores altos → movimiento más brusco.`
+      : null;
+
+  const cardBase = {
+    padding: '14px 16px',
+    borderRadius: '10px',
+    border: '1px solid #333',
+    background: '#141414',
+    textAlign: 'left',
+  };
+
+  return (
+    <div style={{ width: '100%', maxWidth: '640px', marginTop: '20px' }}>
+      <h3 style={{ color: '#00ff00', marginBottom: '12px', fontSize: '1.05rem' }}>Resumen para la demo</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={cardBase}>
+          <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>🫨</div>
+          <strong style={{ color: '#00ffff' }}>Temblor (espectro)</strong>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{tremorLine}</p>
+          <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{tremorSub}</p>
+          {t.spectral_power != null && (
+            <p style={{ margin: '6px 0 0', color: '#666', fontSize: '0.72rem' }}>
+              Potencia espectral (unidades internas): {fmtNum(t.spectral_power, 4)}
+            </p>
+          )}
+        </div>
+        <div style={cardBase}>
+          <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>✋</div>
+          <strong style={{ color: '#00ffff' }}>Bradicinesia (tapping — proxy muñecas)</strong>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{bradyLine}</p>
+          {bradySub && (
+            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{bradySub}</p>
+          )}
+        </div>
+        <div style={cardBase}>
+          <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>🦾</div>
+          <strong style={{ color: '#00ffff' }}>Rigidez / fluidez (ángulo brazo derecho)</strong>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{rigLine}</p>
+          {rigSub && (
+            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{rigSub}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DemoScriptPanel({ isRecording }) {
+  return (
+    <div
+      style={{
+        width: '100%',
+        maxWidth: '640px',
+        marginBottom: '20px',
+        padding: '16px 18px',
+        background: 'linear-gradient(145deg, #121a12 0%, #0d1520 100%)',
+        border: '1px solid #00ff0088',
+        borderRadius: '12px',
+        textAlign: 'left',
+      }}
+    >
+      <h3 style={{ margin: '0 0 10px', color: '#00ff00', fontSize: '1.05rem' }}>Modo demo — guion fijo (10 s)</h3>
+      <ol style={{ margin: 0, paddingLeft: '1.25rem', color: '#ccc', fontSize: '0.88rem', lineHeight: 1.55 }}>
+        <li>Colócate de frente: <strong style={{ color: '#fff' }}>torso y manos visibles</strong> en el encuadre.</li>
+        <li>
+          Pulsa <strong style={{ color: '#00ffff' }}>GRABAR</strong>: durante <strong>10 segundos</strong> repite{' '}
+          <strong style={{ color: '#fff' }}>juntar y separar índice y pulgar</strong> frente al pecho, a ritmo constante.
+          La IA usa las <strong>muñecas</strong> como referencia (MoveNet no ve dedos).
+        </li>
+        <li>Mantén la cámara estable; evita salirte del encuadre.</li>
+      </ol>
+      <p style={{ margin: '12px 0 0', padding: '10px 12px', background: '#00000055', borderRadius: '8px', color: '#8899aa', fontSize: '0.8rem', lineHeight: 1.5 }}>
+        <strong style={{ color: '#aaccff' }}>Opcional (2.ª toma):</strong> misma duración con antebrazos apoyados y manos
+        lo más quietas posible — útil para enfatizar el análisis de <em>temblor</em> en la narrativa de la demo.
+      </p>
+      {isRecording && (
+        <p style={{ margin: '12px 0 0', color: '#ff6666', fontSize: '0.9rem', fontWeight: 'bold' }}>
+          🔴 Grabando… sigue el guion hasta que termine la cuenta.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MedicalDisclaimer() {
+  return (
+    <p
+      style={{
+        width: '100%',
+        maxWidth: '640px',
+        margin: '0 0 16px',
+        padding: '12px 14px',
+        fontSize: '0.78rem',
+        lineHeight: 1.5,
+        color: '#9aa',
+        background: '#1a1a1a',
+        borderLeft: '3px solid #666',
+        borderRadius: '4px',
+        textAlign: 'left',
+      }}
+    >
+      <strong style={{ color: '#ccc' }}>Aviso:</strong> estos valores son{' '}
+      <strong>indicadores de movimiento</strong> para investigación o seguimiento aproximado en este prototipo de
+      hackatón; <strong>no sustituyen</strong> valoración médica, pruebas clínicas ni diagnóstico.
+    </p>
+  );
+}
+
 export default function App() {
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'ar' | 'capture'
 
@@ -258,16 +402,19 @@ function CaptureScreen({ onBack }) {
     <div style={{ backgroundColor: '#0a0a0a', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px', color: 'white', fontFamily: 'monospace', overflowY: 'auto' }}>
       
       <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '640px', alignItems: 'center' }}>
-        <h2>CAPTURA DIGITAL</h2>
+        <h2 style={{ margin: 0 }}>CAPTURA DIGITAL</h2>
         <button onClick={onBack} style={{ padding: '8px 15px', background: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>
           ⬅ VOLVER AL DASHBOARD
         </button>
       </div>
+
+      <MedicalDisclaimer />
       
       {!isModelLoaded ? (
         <div style={{ color: '#00ffff', marginTop: '20px' }}>⏳ Cargando redes neuronales...</div>
       ) : (
-        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '20px' }}>
+        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '12px' }}>
+          <DemoScriptPanel isRecording={isRecording} />
           
           <button 
             onClick={startRecording} 
@@ -319,7 +466,7 @@ function CaptureScreen({ onBack }) {
           {metrics && (
             <div
               style={{
-                marginTop: '24px',
+                marginTop: '8px',
                 width: '100%',
                 maxWidth: '640px',
                 padding: '16px',
@@ -331,23 +478,28 @@ function CaptureScreen({ onBack }) {
                 lineHeight: 1.5,
               }}
             >
-              <h3 style={{ color: '#00ff00', marginTop: 0 }}>📊 Métricas (misma sesión de 10s)</h3>
-              <p style={{ color: '#888', fontSize: '0.75rem', marginBottom: '12px' }}>
-                MoveNet no incluye pulgar/índice: la bradicinesia usa la distancia entre muñecas como
-                aproximación. Unidades en coordenadas de píxel (no metros clínicos).
-              </p>
-              <pre
-                style={{
-                  margin: 0,
-                  overflow: 'auto',
-                  maxHeight: '320px',
-                  color: '#ccc',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                }}
-              >
-                {JSON.stringify(metrics, null, 2)}
-              </pre>
+              <MetricsSummaryCards metrics={metrics} />
+              <details style={{ marginTop: '16px', color: '#888' }}>
+                <summary style={{ cursor: 'pointer', color: '#00ffff', fontSize: '0.85rem' }}>
+                  Ver JSON técnico (integración API)
+                </summary>
+                <p style={{ fontSize: '0.72rem', color: '#666', margin: '10px 0' }}>
+                  Proxy muñecas; coordenadas en píxeles de vídeo, no metros clínicos.
+                </p>
+                <pre
+                  style={{
+                    margin: 0,
+                    overflow: 'auto',
+                    maxHeight: '280px',
+                    color: '#aaa',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    fontSize: '0.72rem',
+                  }}
+                >
+                  {JSON.stringify(metrics, null, 2)}
+                </pre>
+              </details>
             </div>
           )}
 
