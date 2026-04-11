@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as tf from '@tensorflow/tfjs';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, ArrowLeft, AlertCircle, Zap } from 'lucide-react';
+import { LineChart, Line, CartesianGrid, ResponsiveContainer } from 'recharts';
+import { Activity, ArrowLeft, AlertTriangle, ShieldAlert, BrainCircuit } from 'lucide-react';
+
+const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
 
 export default function Dashboard({ onBack, wsStatus, latestAccel }) {
   const [data, setData] = useState([]);
@@ -19,9 +21,8 @@ export default function Dashboard({ onBack, wsStatus, latestAccel }) {
       try {
         const loadedModel = await tf.loadLayersModel('/model_js/model.json');
         setModel(loadedModel);
-        console.log("✅ IA: Cargada normalmente");
       } catch (e) {
-        console.warn("⚠️ IA: Fallo de carga. Usando detección física para la demo.");
+        console.warn("Fallo de carga IA. Usando detección física para la demo.");
       }
     };
     loadModel();
@@ -49,7 +50,7 @@ export default function Dashboard({ onBack, wsStatus, latestAccel }) {
             const score = output.dataSync()[0];
             setPrediction(score);
 
-            if (score > 0.7 && !isStimulating.current) triggerVisualStimulus();
+            if (score > 0.7 && !isStimulating.current) triggerStimulusProtocol();
 
             inputTensor.dispose();
             output.dispose();
@@ -57,142 +58,120 @@ export default function Dashboard({ onBack, wsStatus, latestAccel }) {
         };
         runPrediction();
       } else if (!model && intensity > 25) {
-        if (!isStimulating.current) triggerVisualStimulus();
+        if (!isStimulating.current) triggerStimulusProtocol();
       }
     }
   }, [latestAccel, wsStatus, model, prediction]);
 
-  const triggerVisualStimulus = () => {
-    if (isStimulating.current) return;
-    isStimulating.current = true;
-    setIsFreezing(true);
-    let count = 0;
-    const interval = setInterval(() => {
-      setFlashScreen(prev => !prev);
-      count++;
-      if (count >= 12) {
-        clearInterval(interval);
-        setFlashScreen(false);
-        isStimulating.current = false;
-        setIsFreezing(false);
-      }
-    }, 200);
-  };
+  // 3. ACTIVACIÓN DE ESTÍMULOS (VISUAL Y MÓVIL)
+// Dentro de Dashboard.js
+
+const triggerStimulusProtocol = () => {
+  if (isStimulating.current) return;
+  isStimulating.current = true;
+  setIsFreezing(true);
+  
+  console.log("⚠️ BLOQUEO DETECTADO: Enviando señal al móvil...");
+
+  // Esta es la conexión real entre ambos archivos
+  fetch('http://127.0.0.1:8000/trigger-stimulus', { 
+    method: 'POST',
+    mode: 'cors' 
+  })
+  .then(res => console.log("✅ Móvil respondiendo"))
+  .catch(err => console.error("❌ Error: ¿Está el script de Python encendido?", err));
+
+  // Efecto visual en la pantalla del PC/Tablet para el usuario
+  let count = 0;
+  const interval = setInterval(() => {
+    setFlashScreen(prev => !prev);
+    count++;
+    if (count >= 12) {
+      clearInterval(interval);
+      setFlashScreen(false);
+      isStimulating.current = false;
+      setIsFreezing(false);
+    }
+  }, 300);
+};
 
   return (
-    <div className="dashboard-view" style={{ 
-      backgroundColor: flashScreen ? 'var(--color-green)' : 'var(--color-bg)', 
+    <div style={{ 
+      backgroundColor: flashScreen ? '#0d9488' : '#0f172a', 
       minHeight: '100vh', 
       display: 'flex', 
       flexDirection: 'column',
-      transition: 'background-color 0.1s ease'
+      alignItems: 'center',
+      transition: 'background-color 0.2s ease',
+      color: '#f8fafc',
+      fontFamily: 'system-ui, sans-serif',
+      padding: '30px 20px'
     }}>
-      <header className="view-header">
-        <button className="back-btn" onClick={onBack}>
-          <ArrowLeft size={18} />
-          <span>Launcher</span>
+      
+      {/* Cabecera */}
+      <header style={{ width: '100%', maxWidth: '700px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #334155', paddingBottom: '20px', marginBottom: '30px' }}>
+        <button onClick={onBack} style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#1e293b', color: '#cbd5e1', border: '1px solid #334155', padding: '12px 20px', borderRadius: '12px', fontSize: '1.2rem', fontWeight: 'bold', cursor: 'pointer' }}>
+          <ArrowLeft size={24} /> Volver
         </button>
-        <h2 style={{ fontSize: '1rem', fontWeight: 800 }}>MONITOREO NEURAL</h2>
-        <div style={{ width: 80 }} />
+        <h1 style={{ margin: 0, fontSize: '1.6rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <BrainCircuit color="#38bdf8" size={32} />
+          Monitorización
+        </h1>
       </header>
 
-      <main style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
-        {/* Status Card */}
-        <div className="glass" style={{ padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div className={`status-badge ${isFreezing ? 'status-badge--danger' : 'status-badge--ok'}`}>
-              <Activity size={14} />
-              {isFreezing ? 'BLOQUEO' : 'NORMAL'}
+      <main style={{ width: '100%', maxWidth: '700px', display: 'flex', flexDirection: 'column', gap: '25px' }}>
+        
+        {/* Alerta de Bloqueo Visible */}
+        {isFreezing && (
+          <div style={{ background: '#ef4444', color: '#ffffff', width: '100%', padding: '25px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '15px', fontSize: '1.5rem', fontWeight: 'bold', boxShadow: '0 10px 25px rgba(239, 68, 68, 0.4)' }}>
+            <AlertTriangle size={40} />
+            BLOQUEO DETECTADO: ESTÍMULOS ACTIVADOS
+          </div>
+        )}
+
+        {/* Panel de Datos Principales */}
+        <div style={{ background: '#1e293b', padding: '25px', borderRadius: '20px', boxShadow: '0 8px 30px rgba(0,0,0,0.3)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '1.3rem', fontWeight: 'bold', color: wsStatus === 'Conectado' ? '#10b981' : '#ef4444' }}>
+              <Activity size={28} />
+              Sensores: {wsStatus}
+            </div>
+            <div style={{ fontSize: '1.1rem', color: '#94a3b8' }}>
+              Fuerza: {Math.sqrt(latestAccel.x**2 + latestAccel.y**2 + latestAccel.z**2).toFixed(1)}
             </div>
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--color-text-dim)' }}>
-            INTENSIDAD: {Math.sqrt(latestAccel.x**2 + latestAccel.y**2 + latestAccel.z**2).toFixed(2)}
-          </div>
-        </div>
 
-        {/* Chart Card */}
-        <div className="chart-card">
-          <div className="chart-header">
-            <span className="chart-title">FLUJO DE SENSOR (X) + IA</span>
-            <span className="chart-badge">LIVE 128HZ</span>
-          </div>
-          <div className="chart-area">
-            <ResponsiveContainer width="100%" height={200}>
+          <div style={{ height: '220px', width: '100%' }}>
+            <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
-                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <Line 
-                  type="monotone" 
-                  dataKey="acc_x" 
-                  stroke="var(--color-primary)" 
-                  dot={false} 
-                  isAnimationActive={false} 
-                  strokeWidth={2}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="ai_score" 
-                  stroke="var(--color-cyan)" 
-                  dot={false} 
-                  strokeWidth={3} 
-                  isAnimationActive={false} 
-                />
+                <CartesianGrid stroke="#334155" strokeDasharray="3 3" vertical={false} />
+                <Line type="monotone" dataKey="acc_x" stroke="#94a3b8" dot={false} strokeWidth={2} isAnimationActive={false} />
+                <Line type="monotone" dataKey="ai_score" stroke="#38bdf8" dot={false} strokeWidth={4} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* AI Prediction Circle */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
-          <div style={{ 
-            width: '200px', 
-            height: '200px', 
-            borderRadius: '50%', 
-            border: '2px solid var(--color-border)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            position: 'relative',
-            background: 'radial-gradient(circle, rgba(139, 143, 255, 0.05) 0%, transparent 70%)'
-          }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-dim)', letterSpacing: '2px', position: 'absolute', top: '40px' }}>PROBABILIDAD</div>
-            <div style={{ fontSize: '4rem', fontWeight: 900, color: prediction > 0.6 ? 'var(--color-danger)' : 'var(--color-cyan)', transition: 'color 0.3s' }}>
-              {Math.round(prediction * 100)}%
-            </div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-mute)', position: 'absolute', bottom: '40px' }}>MODELO: <span style={{ color: 'var(--color-primary)' }}>M-NET V2</span></div>
+        {/* Probabilidad IA */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: '#1e293b', padding: '30px', borderRadius: '20px', border: `2px solid ${prediction > 0.6 ? '#ef4444' : '#334155'}` }}>
+          <span style={{ fontSize: '1.4rem', color: '#cbd5e1', marginBottom: '10px' }}>Probabilidad de Bloqueo</span>
+          <div style={{ fontSize: '5rem', fontWeight: '900', color: prediction > 0.6 ? '#ef4444' : '#38bdf8', transition: 'color 0.3s' }}>
+            {Math.round(prediction * 100)}%
           </div>
-          
-          {isFreezing && (
-            <div style={{ marginTop: '20px', color: 'var(--color-danger)', fontWeight: 'bold', animation: 'pulse-danger 0.5s infinite', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <AlertCircle size={20} />
-              ESTÍMULO VISUAL ACTIVO
-            </div>
-          )}
+          <div style={{ fontSize: '1.1rem', color: '#94a3b8', marginTop: '15px' }}>
+            Datos recopilados: {dataBuffer.current.length}/256
+          </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="metrics-row">
-          <div className="metric-card">
-            <div className="metric-label">Buffer</div>
-            <div className="metric-value">{dataBuffer.current.length}/256</div>
+        {/* Modo Seguro / Backup */}
+        {!model && (
+          <div style={{ background: '#78350f', color: '#fde68a', padding: '20px', borderRadius: '16px', display: 'flex', alignItems: 'center', gap: '15px', fontSize: '1.2rem' }}>
+            <ShieldAlert size={32} />
+            Modo Seguro: La Inteligencia Artificial no está lista. Usando sensores físicos para activar los estímulos.
           </div>
-          <div className="metric-card">
-            <div className="metric-label">Status</div>
-            <div className="metric-value" style={{ color: wsStatus === 'Conectado' ? 'var(--color-green)' : 'var(--color-danger)' }}>{wsStatus === 'Conectado' ? 'ON' : 'OFF'}</div>
-          </div>
-          <div className="metric-card">
-            <div className="metric-label">IA</div>
-            <div className="metric-value">{model ? 'RDY' : 'SW'}</div>
-          </div>
-        </div>
+        )}
+
       </main>
-
-      {!model && (
-        <div style={{ background: 'rgba(255, 179, 0, 0.1)', color: 'var(--color-warning)', padding: '10px', fontSize: '0.7rem', textAlign: 'center', borderTop: '1px solid rgba(255, 179, 0, 0.2)' }}>
-          <Zap size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />
-          MODO SEGURO: Usando detección por intensidad física (G-Force).
-        </div>
-      )}
     </div>
   );
 }
