@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import os
+
+from parkinson_kinematics.pose_session import PoseSessionIn, run_pose_session_analysis
 
 app = FastAPI()
 
@@ -71,6 +73,19 @@ def stream_data():
 # ==========================================
 # NUEVO ENDPOINT PARA CONFIGURACIÓN AR
 # ==========================================
+@app.post("/analyze-pose-session")
+def analyze_pose_session(body: PoseSessionIn):
+    """
+    Recibe la serie de poses capturada junto al vídeo (10 s) y devuelve el JSON de métricas
+    (temblor, bradicinesia proxy muñecas, rigidez brazo derecho en índices MoveNet).
+    """
+    try:
+        out = run_pose_session_analysis(body)
+        return out.model_dump(mode="json")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @app.get("/ar-config")
 def get_ar_config():
     """

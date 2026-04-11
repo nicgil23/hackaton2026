@@ -15,6 +15,8 @@ import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
+const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
 export default function App() {
   const [view, setView] = useState('dashboard'); // 'dashboard' | 'ar' | 'capture'
 
@@ -60,10 +62,17 @@ export default function App() {
 function CaptureScreen({ onBack }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+
+  const isRecordingRef = useRef(false);
+  const recordStartRef = useRef(0);
+  const poseBufferRef = useRef([]);
   
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [metricsLoading, setMetricsLoading] = useState(false);
+  const [metricsError, setMetricsError] = useState(null);
   
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
@@ -118,6 +127,19 @@ function CaptureScreen({ onBack }) {
       try {
         const poses = await detector.estimatePoses(videoRef.current);
         drawSkeleton(poses);
+        if (isRecordingRef.current && poses.length > 0) {
+          const kps = poses[0].keypoints;
+          const t = (performance.now() - recordStartRef.current) / 1000;
+          poseBufferRef.current.push({
+            t,
+            keypoints: kps.map((kp) => ({
+              x: kp.x,
+              y: kp.y,
+              z: 0,
+              score: kp.score,
+            })),
+          });
+        }
       } catch (error) {}
       animationFrameId = requestAnimationFrame(detectPose);
     };
@@ -170,7 +192,12 @@ function CaptureScreen({ onBack }) {
     if (!canvasRef.current) return;
     
     chunksRef.current = [];
+    poseBufferRef.current = [];
+    recordStartRef.current = performance.now();
+    isRecordingRef.current = true;
     setRecordedVideoUrl(null);
+    setMetrics(null);
+    setMetricsError(null);
     setIsRecording(true);
 
     const canvasStream = canvasRef.current.captureStream(30);
@@ -183,10 +210,37 @@ function CaptureScreen({ onBack }) {
       }
     };
 
-    mediaRecorder.onstop = () => {
+    mediaRecorder.onstop = async () => {
+      isRecordingRef.current = false;
       const blob = new Blob(chunksRef.current, { type: 'video/webm' });
       const url = URL.createObjectURL(blob);
       setRecordedVideoUrl(url);
+
+      const frames = poseBufferRef.current;
+      if (frames.length < 2) {
+        setMetricsError('Muy pocas poses capturadas; asegúrate de que el esqueleto se vea estable.');
+        return;
+      }
+      setMetricsLoading(true);
+      try {
+        const res = await fetch(`${API_BASE}/analyze-pose-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ frames }),
+        });
+        const text = await res.text();
+        if (!res.ok) {
+          throw new Error(text || res.statusText);
+        }
+        setMetrics(JSON.parse(text));
+      } catch (e) {
+        setMetricsError(
+          e.message ||
+            'No se pudo contactar con el backend. ¿Está uvicorn en el puerto 8000?'
+        );
+      } finally {
+        setMetricsLoading(false);
+      }
     };
 
     mediaRecorder.start();
@@ -232,6 +286,15 @@ function CaptureScreen({ onBack }) {
             <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, transform: 'scaleX(-1)', width: '100%', height: '100%' }} />
           </div>
 
+          {metricsLoading && (
+            <p style={{ marginTop: '24px', color: '#00ffff' }}>⏳ Calculando biomarcadores en el servidor…</p>
+          )}
+          {metricsError && (
+            <p style={{ marginTop: '24px', color: '#ff6666', maxWidth: '640px', textAlign: 'center' }}>
+              {metricsError}
+            </p>
+          )}
+
           {recordedVideoUrl && (
             <div style={{ marginTop: '40px', paddingBottom: '40px', width: '100%', borderTop: '1px dashed #333', paddingTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <h3 style={{ color: '#00ff00' }}>✅ Análisis Grabado (10s)</h3>
@@ -250,6 +313,41 @@ function CaptureScreen({ onBack }) {
               >
                 ⬇️ Descargar Vídeo
               </a>
+            </div>
+          )}
+
+          {metrics && (
+            <div
+              style={{
+                marginTop: '24px',
+                width: '100%',
+                maxWidth: '640px',
+                padding: '16px',
+                background: '#111',
+                border: '1px solid #00ff00',
+                borderRadius: '10px',
+                textAlign: 'left',
+                fontSize: '0.85rem',
+                lineHeight: 1.5,
+              }}
+            >
+              <h3 style={{ color: '#00ff00', marginTop: 0 }}>📊 Métricas (misma sesión de 10s)</h3>
+              <p style={{ color: '#888', fontSize: '0.75rem', marginBottom: '12px' }}>
+                MoveNet no incluye pulgar/índice: la bradicinesia usa la distancia entre muñecas como
+                aproximación. Unidades en coordenadas de píxel (no metros clínicos).
+              </p>
+              <pre
+                style={{
+                  margin: 0,
+                  overflow: 'auto',
+                  maxHeight: '320px',
+                  color: '#ccc',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {JSON.stringify(metrics, null, 2)}
+              </pre>
             </div>
           )}
 
