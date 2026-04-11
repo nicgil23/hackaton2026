@@ -15,16 +15,79 @@ import * as tf from '@tensorflow/tfjs-core';
 import '@tensorflow/tfjs-backend-webgl';
 import * as poseDetection from '@tensorflow-models/pose-detection';
 
+import {
+  buildQualityFrameForApi,
+  estimateSampleRateFromFrames,
+  frameMeetsQualityThreshold,
+} from './utils/captureSignal';
+
 const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+
+const LS_METRICS_KEY = 'hackaton_kinematics_last_metrics_v1';
+
+/** JSON de ejemplo para demos si falla red o cámara (misma forma que el API). */
+const SAMPLE_METRICS = {
+  session_id: '00000000-0000-4000-8000-000000000001',
+  duration_seconds: 10,
+  metrics: {
+    tremor: {
+      dominant_frequency_hz: 5.1,
+      spectral_power: 0.028,
+      detected: true,
+    },
+    bradykinesia: {
+      average_speed_m_s: 0.045,
+      amplitude_decrement_slope: -0.012,
+      cycle_count: 18,
+    },
+    rigidity: {
+      max_rom_degrees: 72.5,
+      rms_jerk: 22.3,
+    },
+  },
+};
 
 function fmtNum(v, digits = 2) {
   if (v == null || Number.isNaN(Number(v))) return '—';
   return Number(v).toFixed(digits);
 }
 
-function MetricsSummaryCards({ metrics }) {
+function DeltaVsPrevious({ prev, cur, toleranceRel = 0.03 }) {
+  if (prev == null || cur == null) return null;
+  const p = Number(prev);
+  const c = Number(cur);
+  if (Number.isNaN(p) || Number.isNaN(c)) return null;
+  const tol = Math.max(1e-9, Math.abs(p) * toleranceRel);
+  if (Math.abs(c - p) <= tol) {
+    return (
+      <span style={{ color: '#666', fontSize: '0.72rem', marginLeft: 8 }}>(≈ igual que antes)</span>
+    );
+  }
+  if (c > p) {
+    return <span style={{ color: '#6c6', fontSize: '0.72rem', marginLeft: 8 }}>↑ vs sesión anterior</span>;
+  }
+  return <span style={{ color: '#c66', fontSize: '0.72rem', marginLeft: 8 }}>↓ vs sesión anterior</span>;
+}
+
+function DeltaBoolVsPrevious({ prev, cur }) {
+  if (prev == null || cur == null) return null;
+  if (Boolean(prev) === Boolean(cur)) {
+    return (
+      <span style={{ color: '#666', fontSize: '0.72rem', marginLeft: 8 }}>(igual que antes)</span>
+    );
+  }
+  return (
+    <span style={{ color: '#aa8', fontSize: '0.72rem', marginLeft: 8 }}>(cambió vs anterior)</span>
+  );
+}
+
+function MetricsSummaryCards({ metrics, previousMetrics }) {
   const m = metrics?.metrics;
   if (!m) return null;
+  const pm = previousMetrics?.metrics;
+  const pt = pm?.tremor || {};
+  const pb = pm?.bradykinesia || {};
+  const pr = pm?.rigidity || {};
   const t = m.tremor || {};
   const b = m.bradykinesia || {};
   const r = m.rigidity || {};
@@ -37,6 +100,19 @@ function MetricsSummaryCards({ metrics }) {
     t.detected === true
       ? 'Heurística: patrón compatible con banda típica de temblor (~4–6 Hz).'
       : 'Heurística: sin detección destacada en esta sesión.';
+
+  const tremorFreqDelta = (
+    <DeltaVsPrevious prev={pt.dominant_frequency_hz} cur={t.dominant_frequency_hz} />
+  );
+  const tremorDetDelta = (
+    <DeltaBoolVsPrevious prev={pt.detected} cur={t.detected} />
+  );
+  const bradyCyclesDelta = <DeltaVsPrevious prev={pb.cycle_count} cur={b.cycle_count} toleranceRel={0.15} />;
+  const bradySpeedDelta = (
+    <DeltaVsPrevious prev={pb.average_speed_m_s} cur={b.average_speed_m_s} />
+  );
+  const rigRomDelta = <DeltaVsPrevious prev={pr.max_rom_degrees} cur={r.max_rom_degrees} />;
+  const rigJerkDelta = <DeltaVsPrevious prev={pr.rms_jerk} cur={r.rms_jerk} />;
 
   const bradyLine =
     b.cycle_count != null && b.cycle_count > 0
@@ -66,13 +142,27 @@ function MetricsSummaryCards({ metrics }) {
 
   return (
     <div style={{ width: '100%', maxWidth: '640px', marginTop: '20px' }}>
-      <h3 style={{ color: '#00ff00', marginBottom: '12px', fontSize: '1.05rem' }}>Resumen para la demo</h3>
+      <h3 style={{ color: '#00ff00', marginBottom: '12px', fontSize: '1.05rem' }}>
+        Resumen para la demo
+        {pm ? (
+          <span style={{ color: '#888', fontWeight: 'normal', fontSize: '0.78rem' }}>
+            {' '}
+            (flechas = comparación con la última sesión guardada en este navegador)
+          </span>
+        ) : null}
+      </h3>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <div style={cardBase}>
           <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>🫨</div>
           <strong style={{ color: '#00ffff' }}>Temblor (espectro)</strong>
-          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{tremorLine}</p>
-          <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{tremorSub}</p>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>
+            {tremorLine}
+            {tremorFreqDelta}
+          </p>
+          <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>
+            {tremorSub}
+            {tremorDetDelta}
+          </p>
           {t.spectral_power != null && (
             <p style={{ margin: '6px 0 0', color: '#666', fontSize: '0.72rem' }}>
               Potencia espectral (unidades internas): {fmtNum(t.spectral_power, 4)}
@@ -82,17 +172,29 @@ function MetricsSummaryCards({ metrics }) {
         <div style={cardBase}>
           <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>✋</div>
           <strong style={{ color: '#00ffff' }}>Bradicinesia (tapping — proxy muñecas)</strong>
-          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{bradyLine}</p>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>
+            {bradyLine}
+            {bradyCyclesDelta}
+          </p>
           {bradySub && (
-            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{bradySub}</p>
+            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>
+              {bradySub}
+              {bradySpeedDelta}
+            </p>
           )}
         </div>
         <div style={cardBase}>
           <div style={{ fontSize: '1.25rem', marginBottom: '6px' }}>🦾</div>
           <strong style={{ color: '#00ffff' }}>Rigidez / fluidez (ángulo brazo derecho)</strong>
-          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>{rigLine}</p>
+          <p style={{ margin: '8px 0 0', color: '#ddd', fontSize: '0.88rem', lineHeight: 1.45 }}>
+            {rigLine}
+            {rigRomDelta}
+          </p>
           {rigSub && (
-            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>{rigSub}</p>
+            <p style={{ margin: '6px 0 0', color: '#888', fontSize: '0.78rem' }}>
+              {rigSub}
+              {rigJerkDelta}
+            </p>
           )}
         </div>
       </div>
@@ -100,7 +202,8 @@ function MetricsSummaryCards({ metrics }) {
   );
 }
 
-function DemoScriptPanel({ isRecording }) {
+function DemoScriptPanel({ isRecording, durationSeconds }) {
+  const d = durationSeconds || 10;
   return (
     <div
       style={{
@@ -114,11 +217,17 @@ function DemoScriptPanel({ isRecording }) {
         textAlign: 'left',
       }}
     >
-      <h3 style={{ margin: '0 0 10px', color: '#00ff00', fontSize: '1.05rem' }}>Modo demo — guion fijo (10 s)</h3>
+      <h3 style={{ margin: '0 0 10px', color: '#00ff00', fontSize: '1.05rem' }}>
+        Modo demo — guion fijo ({d} s)
+      </h3>
+      <p style={{ margin: '0 0 10px', color: '#7a9', fontSize: '0.78rem' }}>
+        Se envían frames con buena confianza y coordenadas <strong>normalizadas al torso</strong> (menos sensible a la
+        distancia a la cámara).
+      </p>
       <ol style={{ margin: 0, paddingLeft: '1.25rem', color: '#ccc', fontSize: '0.88rem', lineHeight: 1.55 }}>
         <li>Colócate de frente: <strong style={{ color: '#fff' }}>torso y manos visibles</strong> en el encuadre.</li>
         <li>
-          Pulsa <strong style={{ color: '#00ffff' }}>GRABAR</strong>: durante <strong>10 segundos</strong> repite{' '}
+          Pulsa <strong style={{ color: '#00ffff' }}>GRABAR</strong>: durante <strong>{d} segundos</strong> repite{' '}
           <strong style={{ color: '#fff' }}>juntar y separar índice y pulgar</strong> frente al pecho, a ritmo constante.
           La IA usa las <strong>muñecas</strong> como referencia (MoveNet no ve dedos).
         </li>
@@ -193,7 +302,7 @@ export default function App() {
             borderRadius: '10px', boxShadow: '0 0 15px rgba(0, 255, 0, 0.4)'
           }}
         >
-          👤 ABRIR CAPTURA IA (10s)
+          👤 ABRIR CAPTURA IA
         </button>
       </div>
     </div>
@@ -210,16 +319,73 @@ function CaptureScreen({ onBack }) {
   const isRecordingRef = useRef(false);
   const recordStartRef = useRef(0);
   const poseBufferRef = useRef([]);
-  
+  const lastLiveQualityRef = useRef(false);
+
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
   const [metrics, setMetrics] = useState(null);
+  const [previousMetrics, setPreviousMetrics] = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [metricsError, setMetricsError] = useState(null);
-  
+  const [cameraError, setCameraError] = useState(null);
+  const [liveQualityOk, setLiveQualityOk] = useState(false);
+
+  const [recordingDurationSec, setRecordingDurationSec] = useState(10);
+  const [recordRemainingSec, setRecordRemainingSec] = useState(10);
+  const [recordProgressPct, setRecordProgressPct] = useState(0);
+
+  const [checkEncuadre, setCheckEncuadre] = useState(false);
+  const [checkLuz, setCheckLuz] = useState(false);
+  const [checkEsqueleto, setCheckEsqueleto] = useState(false);
+  /** Duración de la última captura completada (título del clip). */
+  const [savedClipSeconds, setSavedClipSeconds] = useState(10);
+
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
+
+  const checklistOk = checkEncuadre && checkLuz && checkEsqueleto;
+  const recordingTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isRecording) {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setRecordProgressPct(0);
+      return;
+    }
+    const started = Date.now();
+    const totalMs = recordingDurationSec * 1000;
+    setRecordRemainingSec(recordingDurationSec);
+    recordingTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const left = Math.max(0, totalMs - elapsed);
+      setRecordRemainingSec(Math.ceil(left / 1000));
+      setRecordProgressPct(Math.min(100, (elapsed / totalMs) * 100));
+    }, 100);
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    };
+  }, [isRecording, recordingDurationSec]);
+
+  const applyDemoMetrics = () => {
+    let prev = null;
+    try {
+      const raw = localStorage.getItem(LS_METRICS_KEY);
+      prev = raw ? JSON.parse(raw) : null;
+    } catch {
+      prev = null;
+    }
+    setPreviousMetrics(prev);
+    setMetrics(SAMPLE_METRICS);
+    setMetricsError(null);
+    setRecordedVideoUrl(null);
+  };
 
   const BONES = [
     [5, 7], [7, 9], // Brazo izquierdo
@@ -245,6 +411,7 @@ function CaptureScreen({ onBack }) {
 
     const startCamera = async () => {
       try {
+        setCameraError(null);
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 640, height: 480 } 
         });
@@ -261,8 +428,12 @@ function CaptureScreen({ onBack }) {
           };
         }
       } catch (e) {
-        console.error("Error cámara:", e);
-        alert("¡Acepta los permisos de la cámara!");
+        console.error('Error cámara:', e);
+        setCameraError(
+          e?.name === 'NotAllowedError'
+            ? 'Permiso de cámara denegado. Puedes usar “Modo presentación” con datos de ejemplo.'
+            : `No se pudo abrir la cámara: ${e?.message || e}. Prueba modo presentación.`
+        );
       }
     };
 
@@ -271,18 +442,23 @@ function CaptureScreen({ onBack }) {
       try {
         const poses = await detector.estimatePoses(videoRef.current);
         drawSkeleton(poses);
-        if (isRecordingRef.current && poses.length > 0) {
-          const kps = poses[0].keypoints;
-          const t = (performance.now() - recordStartRef.current) / 1000;
-          poseBufferRef.current.push({
-            t,
-            keypoints: kps.map((kp) => ({
-              x: kp.x,
-              y: kp.y,
-              z: 0,
-              score: kp.score,
-            })),
-          });
+        if (poses.length > 0) {
+          const rawKps = poses[0].keypoints;
+          const ok = frameMeetsQualityThreshold(rawKps);
+          if (ok !== lastLiveQualityRef.current) {
+            lastLiveQualityRef.current = ok;
+            setLiveQualityOk(ok);
+          }
+          if (isRecordingRef.current) {
+            const t = (performance.now() - recordStartRef.current) / 1000;
+            const frame = buildQualityFrameForApi(t, rawKps);
+            if (frame) poseBufferRef.current.push(frame);
+          }
+        } else {
+          if (lastLiveQualityRef.current) {
+            lastLiveQualityRef.current = false;
+            setLiveQualityOk(false);
+          }
         }
       } catch (error) {}
       animationFrameId = requestAnimationFrame(detectPose);
@@ -333,14 +509,18 @@ function CaptureScreen({ onBack }) {
   }, []);
 
   const startRecording = () => {
-    if (!canvasRef.current) return;
-    
+    if (!canvasRef.current || !checklistOk) return;
+
+    const durMs = recordingDurationSec * 1000;
+    setSavedClipSeconds(recordingDurationSec);
+
     chunksRef.current = [];
     poseBufferRef.current = [];
     recordStartRef.current = performance.now();
     isRecordingRef.current = true;
     setRecordedVideoUrl(null);
     setMetrics(null);
+    setPreviousMetrics(null);
     setMetricsError(null);
     setIsRecording(true);
 
@@ -362,25 +542,41 @@ function CaptureScreen({ onBack }) {
 
       const frames = poseBufferRef.current;
       if (frames.length < 2) {
-        setMetricsError('Muy pocas poses capturadas; asegúrate de que el esqueleto se vea estable.');
+        setMetricsError(
+          'Muy pocos frames válidos tras el filtro de calidad (confianza + normalización al torso). Mantén manos y brazo derecho visibles y buena luz, o alarga la duración.'
+        );
         return;
       }
       setMetricsLoading(true);
       try {
+        const hint = estimateSampleRateFromFrames(frames);
         const res = await fetch(`${API_BASE}/analyze-pose-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ frames }),
+          body: JSON.stringify({
+            frames,
+            sample_rate_hint_hz: hint,
+          }),
         });
         const text = await res.text();
         if (!res.ok) {
           throw new Error(text || res.statusText);
         }
-        setMetrics(JSON.parse(text));
+        let prev = null;
+        try {
+          const raw = localStorage.getItem(LS_METRICS_KEY);
+          prev = raw ? JSON.parse(raw) : null;
+        } catch {
+          prev = null;
+        }
+        setPreviousMetrics(prev);
+        const parsed = JSON.parse(text);
+        setMetrics(parsed);
+        localStorage.setItem(LS_METRICS_KEY, text);
       } catch (e) {
         setMetricsError(
           e.message ||
-            'No se pudo contactar con el backend. ¿Está uvicorn en el puerto 8000?'
+            'No se pudo contactar con el backend. ¿Está uvicorn en el puerto 8000? Usa “Modo presentación” para la demo.'
         );
       } finally {
         setMetricsLoading(false);
@@ -389,13 +585,12 @@ function CaptureScreen({ onBack }) {
 
     mediaRecorder.start();
 
-    // 🔴 GRABACIÓN DE 10 SEGUNDOS
     setTimeout(() => {
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         mediaRecorderRef.current.stop();
         setIsRecording(false);
       }
-    }, 10000); 
+    }, durMs);
   };
 
   return (
@@ -410,23 +605,170 @@ function CaptureScreen({ onBack }) {
 
       <MedicalDisclaimer />
       
+      {cameraError && (
+        <div
+          style={{
+            width: '100%',
+            maxWidth: '640px',
+            marginTop: '12px',
+            padding: '12px 14px',
+            background: '#2a1515',
+            border: '1px solid #c44',
+            borderRadius: '8px',
+            color: '#fcc',
+            fontSize: '0.85rem',
+          }}
+        >
+          {cameraError}
+        </div>
+      )}
+
+      <div style={{ width: '100%', maxWidth: '640px', marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+        <button
+          type="button"
+          onClick={applyDemoMetrics}
+          style={{
+            padding: '10px 16px',
+            fontSize: '0.85rem',
+            cursor: 'pointer',
+            background: '#222',
+            color: '#ffcc66',
+            border: '1px solid #ffcc66',
+            borderRadius: '8px',
+          }}
+        >
+          Modo presentación (datos de ejemplo)
+        </button>
+        <span style={{ color: '#666', fontSize: '0.78rem', alignSelf: 'center' }}>
+          Si falla cámara o API, el jurado puede ver el panel de métricas igual.
+        </span>
+      </div>
+
       {!isModelLoaded ? (
         <div style={{ color: '#00ffff', marginTop: '20px' }}>⏳ Cargando redes neuronales...</div>
       ) : (
         <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '12px' }}>
-          <DemoScriptPanel isRecording={isRecording} />
-          
-          <button 
-            onClick={startRecording} 
-            disabled={isRecording}
-            style={{ 
-              marginBottom: '20px', padding: '15px 30px', fontSize: '1.2rem', fontWeight: 'bold', cursor: isRecording ? 'not-allowed' : 'pointer',
-              backgroundColor: isRecording ? '#ff0000' : '#00ffff', color: isRecording ? '#fff' : '#000',
-              border: 'none', borderRadius: '50px', boxShadow: isRecording ? '0 0 20px #ff0000' : '0 0 15px #00ffff'
+          <div
+            style={{
+              width: '100%',
+              marginBottom: '16px',
+              padding: '14px 16px',
+              background: '#121218',
+              border: '1px solid #333',
+              borderRadius: '10px',
+              textAlign: 'left',
             }}
           >
-            {isRecording ? '🔴 GRABANDO (10s)...' : '⏺ GRABAR GEMELO DIGITAL'}
+            <strong style={{ color: '#00ffff' }}>Antes de grabar</strong>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '12px', cursor: 'pointer', color: '#ccc', fontSize: '0.86rem' }}>
+              <input type="checkbox" checked={checkEncuadre} onChange={(e) => setCheckEncuadre(e.target.checked)} />
+              <span>Tengo <strong>torso y manos</strong> dentro del encuadre.</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '10px', cursor: 'pointer', color: '#ccc', fontSize: '0.86rem' }}>
+              <input type="checkbox" checked={checkLuz} onChange={(e) => setCheckLuz(e.target.checked)} />
+              <span>Hay <strong>luz suficiente</strong> y poco contraluz frente a la cámara.</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '10px', cursor: 'pointer', color: '#ccc', fontSize: '0.86rem' }}>
+              <input type="checkbox" checked={checkEsqueleto} onChange={(e) => setCheckEsqueleto(e.target.checked)} />
+              <span>
+                Veo el <strong>esqueleto cyan/verde</strong> superpuesto (vista previa estable).
+              </span>
+            </label>
+            <p
+              style={{
+                margin: '12px 0 0',
+                padding: '8px 10px',
+                borderRadius: '6px',
+                fontSize: '0.8rem',
+                background: liveQualityOk ? '#0a2218' : '#221a0a',
+                color: liveQualityOk ? '#8d8' : '#ca8',
+                border: `1px solid ${liveQualityOk ? '#264' : '#642'}`,
+              }}
+            >
+              {liveQualityOk
+                ? '● Señal en vivo: puntos clave con buena confianza (lista para grabar).'
+                : '○ Señal en vivo: acerca el cuerpo o mejora la luz hasta que el esqueleto sea estable.'}
+            </p>
+          </div>
+
+          <label
+            style={{
+              width: '100%',
+              marginBottom: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              color: '#aaa',
+              fontSize: '0.86rem',
+            }}
+          >
+            Duración de la grabación
+            <select
+              value={recordingDurationSec}
+              onChange={(e) => setRecordingDurationSec(Number(e.target.value))}
+              disabled={isRecording}
+              style={{
+                padding: '8px 12px',
+                borderRadius: '8px',
+                background: '#1a1a1a',
+                color: '#fff',
+                border: '1px solid #444',
+              }}
+            >
+              <option value={10}>10 s</option>
+              <option value={15}>15 s</option>
+              <option value={20}>20 s</option>
+              <option value={30}>30 s</option>
+            </select>
+          </label>
+
+          <DemoScriptPanel isRecording={isRecording} durationSeconds={recordingDurationSec} />
+
+          <button
+            onClick={startRecording}
+            disabled={isRecording || !checklistOk}
+            title={!checklistOk ? 'Marca las tres casillas del checklist' : ''}
+            style={{
+              marginBottom: '12px',
+              padding: '15px 30px',
+              fontSize: '1.2rem',
+              fontWeight: 'bold',
+              cursor: isRecording || !checklistOk ? 'not-allowed' : 'pointer',
+              opacity: !checklistOk && !isRecording ? 0.45 : 1,
+              backgroundColor: isRecording ? '#ff0000' : '#00ffff',
+              color: isRecording ? '#fff' : '#000',
+              border: 'none',
+              borderRadius: '50px',
+              boxShadow: isRecording ? '0 0 20px #ff0000' : '0 0 15px #00ffff',
+            }}
+          >
+            {isRecording
+              ? `🔴 GRABANDO (${recordRemainingSec}s)…`
+              : '⏺ GRABAR GEMELO DIGITAL'}
           </button>
+
+          {isRecording && (
+            <div style={{ width: '100%', marginBottom: '16px' }}>
+              <div
+                style={{
+                  height: '10px',
+                  background: '#222',
+                  borderRadius: '6px',
+                  overflow: 'hidden',
+                  border: '1px solid #444',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${recordProgressPct}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #ff4444, #ff8888)',
+                    transition: 'width 0.08s linear',
+                  }}
+                />
+              </div>
+            </div>
+          )}
 
           <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden', border: isRecording ? '4px solid #ff0000' : '2px solid #333', transition: 'border 0.3s' }}>
             <video ref={videoRef} playsInline muted style={{ transform: 'scaleX(-1)', display: 'block', maxWidth: '100%' }} />
@@ -437,14 +779,30 @@ function CaptureScreen({ onBack }) {
             <p style={{ marginTop: '24px', color: '#00ffff' }}>⏳ Calculando biomarcadores en el servidor…</p>
           )}
           {metricsError && (
-            <p style={{ marginTop: '24px', color: '#ff6666', maxWidth: '640px', textAlign: 'center' }}>
-              {metricsError}
-            </p>
+            <div style={{ marginTop: '24px', maxWidth: '640px', textAlign: 'center' }}>
+              <p style={{ color: '#ff6666' }}>{metricsError}</p>
+              <button
+                type="button"
+                onClick={applyDemoMetrics}
+                style={{
+                  marginTop: '12px',
+                  padding: '10px 18px',
+                  cursor: 'pointer',
+                  background: '#332211',
+                  color: '#fc6',
+                  border: '1px solid #fc6',
+                  borderRadius: '8px',
+                  fontSize: '0.9rem',
+                }}
+              >
+                Cargar datos de ejemplo para la demo
+              </button>
+            </div>
           )}
 
           {recordedVideoUrl && (
             <div style={{ marginTop: '40px', paddingBottom: '40px', width: '100%', borderTop: '1px dashed #333', paddingTop: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <h3 style={{ color: '#00ff00' }}>✅ Análisis Grabado (10s)</h3>
+              <h3 style={{ color: '#00ff00' }}>✅ Análisis grabado ({savedClipSeconds}s)</h3>
               <video 
                 src={recordedVideoUrl} 
                 controls 
@@ -455,7 +813,7 @@ function CaptureScreen({ onBack }) {
               {/* Botón opcional para descargar el vídeo */}
               <a 
                 href={recordedVideoUrl} 
-                download="gemelo-digital-10s.webm"
+                download={`gemelo-digital-${savedClipSeconds}s.webm`}
                 style={{ marginTop: '15px', color: '#00ffff', textDecoration: 'none', borderBottom: '1px solid #00ffff', paddingBottom: '2px' }}
               >
                 ⬇️ Descargar Vídeo
@@ -478,13 +836,14 @@ function CaptureScreen({ onBack }) {
                 lineHeight: 1.5,
               }}
             >
-              <MetricsSummaryCards metrics={metrics} />
+              <MetricsSummaryCards metrics={metrics} previousMetrics={previousMetrics} />
               <details style={{ marginTop: '16px', color: '#888' }}>
                 <summary style={{ cursor: 'pointer', color: '#00ffff', fontSize: '0.85rem' }}>
                   Ver JSON técnico (integración API)
                 </summary>
                 <p style={{ fontSize: '0.72rem', color: '#666', margin: '10px 0' }}>
-                  Proxy muñecas; coordenadas en píxeles de vídeo, no metros clínicos.
+                  Coordenadas <strong>normalizadas al torso</strong> (origen cadera u hombros, escala ancho
+                  hombros/cadera). Proxy muñecas; no son metros clínicos.
                 </p>
                 <pre
                   style={{

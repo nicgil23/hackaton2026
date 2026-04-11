@@ -33,6 +33,10 @@ class PoseSessionIn(BaseModel):
 
     session_id: str | None = None
     frames: list[FrameIn] = Field(..., min_length=2)
+    sample_rate_hint_hz: float | None = Field(
+        default=None,
+        description="Hz medidos en cliente (p. ej. tras filtrar frames); si es coherente, se mezcla con la estimación por timestamps.",
+    )
 
 
 def _kp_series(frames: list[FrameIn], index: int) -> np.ndarray:
@@ -72,7 +76,12 @@ def run_pose_session_analysis(payload: PoseSessionIn) -> SessionAnalysisOutput:
     n = len(frames)
     ts = np.array([f.t for f in frames], dtype=np.float64)
     span = float(ts[-1] - ts[0]) if n > 1 else 0.0
-    fs = _estimate_sample_rate_hz(frames)
+    fs_est = _estimate_sample_rate_hz(frames)
+    hint = payload.sample_rate_hint_hz
+    if hint is not None and 24.0 <= float(hint) <= 120.0:
+        fs = float(0.5 * fs_est + 0.5 * float(hint))
+    else:
+        fs = fs_est
     duration = span if span > 1e-6 else float(max(n - 1, 1)) / fs
 
     rw = _kp_series(frames, 10)
