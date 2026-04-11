@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as tf from '@tensorflow/tfjs';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { Activity } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Activity, ArrowLeft, AlertCircle, Zap } from 'lucide-react';
 
-export default function Dashboard({ onEnterAR, wsStatus, latestAccel, sendToMobile }) {
+export default function Dashboard({ onBack, wsStatus, latestAccel }) {
   const [data, setData] = useState([]);
   const [isFreezing, setIsFreezing] = useState(false);
   const [flashScreen, setFlashScreen] = useState(false);
@@ -13,43 +13,15 @@ export default function Dashboard({ onEnterAR, wsStatus, latestAccel, sendToMobi
   const isStimulating = useRef(false);
   const dataBuffer = useRef([]);
 
-  // 1. CARGA DEL MODELO CON BYPASS DE KERAS 3
+  // 1. CARGA DEL MODELO
   useEffect(() => {
     const loadModel = async () => {
       try {
-        // Intento 1: Carga normal
         const loadedModel = await tf.loadLayersModel('/model_js/model.json');
         setModel(loadedModel);
         console.log("✅ IA: Cargada normalmente");
       } catch (e) {
-        console.warn("⚠️ IA: Fallo de capas. Aplicando reconstrucción manual...");
-        try {
-          // Intento 2: Reconstrucción manual de la arquitectura según tu JSON
-          const manualModel = tf.sequential();
-          manualModel.add(tf.layers.conv1d({
-            inputShape: [256, 3],
-            filters: 64,
-            kernelSize: 3,
-            activation: 'relu'
-          }));
-          manualModel.add(tf.layers.batchNormalization());
-          manualModel.add(tf.layers.maxPooling1d({poolSize: 2}));
-          manualModel.add(tf.layers.conv1d({filters: 128, kernelSize: 3, activation: 'relu'}));
-          manualModel.add(tf.layers.batchNormalization());
-          manualModel.add(tf.layers.maxPooling1d({poolSize: 2}));
-          manualModel.add(tf.layers.lstm({units: 64}));
-          manualModel.add(tf.layers.dropout({rate: 0.5}));
-          manualModel.add(tf.layers.dense({units: 32, activation: 'relu'}));
-          manualModel.add(tf.layers.dense({units: 1, activation: 'sigmoid'}));
-
-          // Intentamos cargar solo los pesos si la arquitectura falló
-          const tempModel = await tf.loadLayersModel('/model_js/model.json');
-          manualModel.setWeights(tempModel.getWeights());
-          setModel(manualModel);
-          console.log("✅ IA: Reconstruida y Pesos inyectados");
-        } catch (e2) {
-          console.error("❌ IA: No se pudo reconstruir. Usando lógica de movimiento física para la demo.");
-        }
+        console.warn("⚠️ IA: Fallo de carga. Usando detección física para la demo.");
       }
     };
     loadModel();
@@ -61,7 +33,6 @@ export default function Dashboard({ onEnterAR, wsStatus, latestAccel, sendToMobi
       dataBuffer.current.push([latestAccel.x, latestAccel.y, latestAccel.z]);
       if (dataBuffer.current.length > 256) dataBuffer.current.shift();
 
-      // Intensidad para modo emergencia
       const intensity = Math.sqrt(latestAccel.x**2 + latestAccel.y**2 + latestAccel.z**2);
 
       setData(prev => [...prev, {
@@ -82,11 +53,10 @@ export default function Dashboard({ onEnterAR, wsStatus, latestAccel, sendToMobi
 
             inputTensor.dispose();
             output.dispose();
-          } catch (err) { console.error(err); }
+          } catch (err) {}
         };
         runPrediction();
       } else if (!model && intensity > 25) {
-        // Si el modelo falló del todo, que la demo funcione por fuerza bruta
         if (!isStimulating.current) triggerVisualStimulus();
       }
     }
@@ -110,31 +80,117 @@ export default function Dashboard({ onEnterAR, wsStatus, latestAccel, sendToMobi
   };
 
   return (
-    <div style={{ backgroundColor: flashScreen ? '#00ff00' : '#0a0a0f', minHeight: '100vh', width: '100vw', padding: '20px', color: flashScreen ? '#000' : '#fff', display: 'flex', flexDirection: 'column' }}>
-      <header>
-        <h2 style={{ margin: 0 }}>🧠 Parkinson AI - {wsStatus}</h2>
+    <div className="dashboard-view" style={{ 
+      backgroundColor: flashScreen ? 'var(--color-green)' : 'var(--color-bg)', 
+      minHeight: '100vh', 
+      display: 'flex', 
+      flexDirection: 'column',
+      transition: 'background-color 0.1s ease'
+    }}>
+      <header className="view-header">
+        <button className="back-btn" onClick={onBack}>
+          <ArrowLeft size={18} />
+          <span>Launcher</span>
+        </button>
+        <h2 style={{ fontSize: '1rem', fontWeight: 800 }}>MONITOREO NEURAL</h2>
+        <div style={{ width: 80 }} />
       </header>
 
-      <div style={{ marginTop: '20px', background: '#000', borderRadius: '10px', padding: '10px', display: 'flex', justifyContent: 'center' }}>
-        <LineChart width={340} height={200} data={data}>
-          <CartesianGrid stroke="#222" />
-          <Line type="monotone" dataKey="acc_x" stroke="#8b8fff" dot={false} isAnimationActive={false} />
-          <Line type="monotone" dataKey="ai_score" stroke="#00ffff" dot={false} strokeWidth={3} isAnimationActive={false} />
-        </LineChart>
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-        <div style={{ fontSize: '5rem', fontWeight: 'bold', color: prediction > 0.6 ? '#f00' : '#00ffff' }}>
-          {Math.round(prediction * 100)}%
+      <main style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+        {/* Status Card */}
+        <div className="glass" style={{ padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className={`status-badge ${isFreezing ? 'status-badge--danger' : 'status-badge--ok'}`}>
+              <Activity size={14} />
+              {isFreezing ? 'BLOQUEO' : 'NORMAL'}
+            </div>
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--color-text-dim)' }}>
+            INTENSIDAD: {Math.sqrt(latestAccel.x**2 + latestAccel.y**2 + latestAccel.z**2).toFixed(2)}
+          </div>
         </div>
-        {dataBuffer.current.length < 256 && <div>Recopilando datos: {dataBuffer.current.length}/256</div>}
-      </div>
 
-      {isFreezing && <div style={{background: '#f00', color: '#fff', padding: '10px', textAlign: 'center'}}>⚠️ BLOQUEO DETECTADO</div>}
-      
+        {/* Chart Card */}
+        <div className="chart-card">
+          <div className="chart-header">
+            <span className="chart-title">FLUJO DE SENSOR (X) + IA</span>
+            <span className="chart-badge">LIVE 128HZ</span>
+          </div>
+          <div className="chart-area">
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={data}>
+                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <Line 
+                  type="monotone" 
+                  dataKey="acc_x" 
+                  stroke="var(--color-primary)" 
+                  dot={false} 
+                  isAnimationActive={false} 
+                  strokeWidth={2}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="ai_score" 
+                  stroke="var(--color-cyan)" 
+                  dot={false} 
+                  strokeWidth={3} 
+                  isAnimationActive={false} 
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* AI Prediction Circle */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', position: 'relative' }}>
+          <div style={{ 
+            width: '200px', 
+            height: '200px', 
+            borderRadius: '50%', 
+            border: '2px solid var(--color-border)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            position: 'relative',
+            background: 'radial-gradient(circle, rgba(139, 143, 255, 0.05) 0%, transparent 70%)'
+          }}>
+            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-dim)', letterSpacing: '2px', position: 'absolute', top: '40px' }}>PROBABILIDAD</div>
+            <div style={{ fontSize: '4rem', fontWeight: 900, color: prediction > 0.6 ? 'var(--color-danger)' : 'var(--color-cyan)', transition: 'color 0.3s' }}>
+              {Math.round(prediction * 100)}%
+            </div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-mute)', position: 'absolute', bottom: '40px' }}>MODELO: <span style={{ color: 'var(--color-primary)' }}>M-NET V2</span></div>
+          </div>
+          
+          {isFreezing && (
+            <div style={{ marginTop: '20px', color: 'var(--color-danger)', fontWeight: 'bold', animation: 'pulse-danger 0.5s infinite', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={20} />
+              ESTÍMULO VISUAL ACTIVO
+            </div>
+          )}
+        </div>
+
+        {/* Stats Grid */}
+        <div className="metrics-row">
+          <div className="metric-card">
+            <div className="metric-label">Buffer</div>
+            <div className="metric-value">{dataBuffer.current.length}/256</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">Status</div>
+            <div className="metric-value" style={{ color: wsStatus === 'Conectado' ? 'var(--color-green)' : 'var(--color-danger)' }}>{wsStatus === 'Conectado' ? 'ON' : 'OFF'}</div>
+          </div>
+          <div className="metric-card">
+            <div className="metric-label">IA</div>
+            <div className="metric-value">{model ? 'RDY' : 'SW'}</div>
+          </div>
+        </div>
+      </main>
+
       {!model && (
-        <div style={{background: '#420', color: '#fb0', padding: '5px', fontSize: '0.7rem'}}>
-          MODO SEGURO: Usando detección por intensidad física.
+        <div style={{ background: 'rgba(255, 179, 0, 0.1)', color: 'var(--color-warning)', padding: '10px', fontSize: '0.7rem', textAlign: 'center', borderTop: '1px solid rgba(255, 179, 0, 0.2)' }}>
+          <Zap size={12} style={{ marginRight: 5, verticalAlign: 'middle' }} />
+          MODO SEGURO: Usando detección por intensidad física (G-Force).
         </div>
       )}
     </div>

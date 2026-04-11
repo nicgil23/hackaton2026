@@ -1,306 +1,173 @@
 /**
  * App.js
  * ============================================================
- * Punto de entrada de la aplicación.
- * Gestiona la navegación y la conexión global al móvil.
+ * Premium Med100 Application Shell.
+ * Gestión de Launcher, Dashboard, AR y Captura IA.
  * ============================================================
  */
 
 import React, { useState, useEffect, useRef } from 'react';
 import Dashboard from './components/Dashboard';
-import ARGuide   from './components/ARGuide';
-
-// Importaciones para la IA de captura de movimiento
-import * as tf from '@tensorflow/tfjs-core';
-import '@tensorflow/tfjs-backend-webgl';
-import * as poseDetection from '@tensorflow-models/pose-detection';
-
-const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:8000';
+import ARGuide from './components/ARGuide';
+import CaptureScreen from './components/CaptureScreen';
+import { 
+  Activity, 
+  Scan, 
+  Fingerprint, 
+  Settings, 
+  Wifi, 
+  ChevronRight,
+  ShieldCheck
+} from 'lucide-react';
 
 export default function App() {
-  const [view, setView] = useState('dashboard'); // 'dashboard' | 'ar' | 'capture'
-
-  // ----- ESTADO GLOBAL DEL WEBSOCKET -----
-  const [wsStatus, setWsStatus] = useState('Desconectado');
+  const [view, setView] = useState('launcher'); // 'launcher' | 'dashboard' | 'ar' | 'capture'
+  const [wsStatus, setWsStatus] = useState('Buscando...');
   const [latestAccel, setLatestAccel] = useState({ x: 0, y: 0, z: 0 });
   const wsRef = useRef(null);
 
+  // ----- WEBSOCKET CONNECTION -----
   useEffect(() => {
     const connectWebSocket = () => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
       
-      // Asegúrate de que esta IP y PUERTO sean los de tu móvil (Sensor Logger suele usar 8080)
-      const MOVIL_IP = "172.20.10.8";
+      const MOVIL_IP = "172.20.10.8"; 
       const MOVIL_PORT = "8080"; 
       const wsUrl = `ws://${MOVIL_IP}:${MOVIL_PORT}/sensor/connect?type=android.sensor.accelerometer`;
       
-      console.log(`Conectando a ${wsUrl} ...`);
+      console.log(`📡 Med100: Conectando a sensor móvil...`);
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      ws.onopen = () => {
-        console.log('✅ WebSocket conectado al móvil');
-        setWsStatus('Conectado');
-      };
-
+      ws.onopen = () => setWsStatus('Conectado');
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.values && Array.isArray(data.values) && data.values.length >= 3) {
+          if (data.values) {
             setLatestAccel({ x: data.values[0], y: data.values[1], z: data.values[2] });
           } else if (data.x !== undefined) {
             setLatestAccel({ x: data.x, y: data.y, z: data.z });
           }
-        } catch (e) {
-          console.error('Error al parsear JSON:', e);
-        }
+        } catch (e) {}
       };
-
       ws.onerror = () => setWsStatus('Error');
-      ws.onclose = () => setWsStatus('Desconectado');
+      ws.onclose = () => {
+        setWsStatus('Desconectado');
+        setTimeout(connectWebSocket, 5000); 
+      };
     };
 
     connectWebSocket();
-    return () => {
-      if (wsRef.current) wsRef.current.close();
-    };
+    return () => wsRef.current?.close();
   }, []);
 
-  // Vista 1: Realidad Aumentada
-  if (view === 'ar') {
-    return <ARGuide onBack={() => setView('dashboard')} />;
-  }
-
-  // Vista 2: Captura (Le pasamos los estados del WS para que los vea)
-  if (view === 'capture') {
-    return <CaptureScreen 
-      onBack={() => setView('dashboard')} 
-      wsStatus={wsStatus} 
-      latestAccel={latestAccel} 
-    />;
-  }
-
-  // Vista 3: Dashboard Principal
-  return (
-    <div style={{ position: 'relative', width: '100%', height: '100vh' }}>
-      <Dashboard 
-        onEnterAR={() => setView('ar')} 
-        wsStatus={wsStatus} 
-        latestAccel={latestAccel} 
-      />
-      
-      <div style={{ position: 'absolute', bottom: '30px', left: '0', width: '100%', display: 'flex', justifyContent: 'center', zIndex: 9999 }}>
-        <button 
-          onClick={() => setView('capture')}
-          style={{
-            padding: '15px 30px', fontSize: '1.2rem', fontWeight: 'bold', cursor: 'pointer',
-            backgroundColor: '#000', color: '#00ff00', border: '2px solid #00ff00', 
-            borderRadius: '10px', boxShadow: '0 0 15px rgba(0, 255, 0, 0.4)'
-          }}
-        >
-          👤 ABRIR CAPTURA IA (10s)
+  // --- RENDER HELPERS ---
+  const renderHeader = () => (
+    <header className="dashboard-header" style={{ padding: '20px', borderBottom: '1px solid var(--color-border)' }}>
+      <div className="dashboard-brand">
+        <div className="brand-dot" />
+        <h1 className="brand-name">Med<span className="brand-ai">100</span></h1>
+        <div style={{ marginLeft: '10px', fontSize: '0.6rem', padding: '2px 6px', background: 'rgba(139, 143, 255, 0.1)', color: 'var(--color-primary)', borderRadius: '4px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>
+          PRO v2.6
+        </div>
+      </div>
+      <div className="header-right">
+        <div className={`connection-badge ${wsStatus === 'Conectado' ? 'connection-badge--ok' : 'connection-badge--error'}`}>
+          <div className="connection-dot" />
+          {wsStatus.toUpperCase()}
+        </div>
+        <button style={{ background: 'none', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer' }}>
+          <Settings size={18} />
         </button>
+      </div>
+    </header>
+  );
+
+  const renderLauncher = () => (
+    <div className="launcher-view" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ padding: '32px 24px 0' }}>
+        <h2 style={{ fontSize: '1.8rem', fontWeight: 900, marginBottom: '8px' }}>Hola, <span style={{ color: 'var(--color-primary)' }}>Paciente 01</span></h2>
+        <p style={{ color: 'var(--color-text-dim)', fontSize: '0.9rem' }}>Seleccione un módulo para comenzar el monitoreo.</p>
+      </div>
+
+      <div className="launcher">
+        <div className="launch-card" onClick={() => setView('dashboard')}>
+          <div className="launch-icon-wrapper" style={{ color: 'var(--color-cyan)' }}>
+            <Activity size={28} />
+          </div>
+          <div className="launch-info">
+            <h3 className="launch-title">Monitoreo Real</h3>
+            <p className="launch-desc">Detección de FOG y temblores mediante IA.</p>
+          </div>
+        </div>
+
+        <div className="launch-card" onClick={() => setView('ar')}>
+          <div className="launch-icon-wrapper" style={{ color: 'var(--color-magenta)' }}>
+            <Scan size={28} />
+          </div>
+          <div className="launch-info">
+            <h3 className="launch-title">Guía Postural</h3>
+            <p className="launch-desc">Asistencia visual con realidad aumentada.</p>
+          </div>
+        </div>
+
+        <div className="launch-card" onClick={() => setView('capture')}>
+          <div className="launch-icon-wrapper" style={{ color: 'var(--color-green)' }}>
+            <Fingerprint size={28} />
+          </div>
+          <div className="launch-info">
+            <h3 className="launch-title">Gemelo Digital</h3>
+            <p className="launch-desc">Captura biométrica y análisis de simetría.</p>
+          </div>
+        </div>
+
+        <div className="launch-card" onClick={() => alert('Próximamente: Historial Clínico')}>
+          <div className="launch-icon-wrapper" style={{ color: 'var(--color-warning)' }}>
+            <ShieldCheck size={28} />
+          </div>
+          <div className="launch-info">
+            <h3 className="launch-title">Seguridad</h3>
+            <p className="launch-desc">Configuración de contactos de emergencia.</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="status-banner glass" style={{ margin: 'auto 20px 20px', padding: '20px', display: 'flex', alignItems: 'center', gap: '15px' }}>
+        <div style={{ padding: '10px', background: 'rgba(0, 230, 118, 0.1)', borderRadius: '12px' }}>
+          <Wifi size={24} color="var(--color-green)" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 'bold' }}>Sincronización Activa</div>
+          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>Recibiendo datos de acelerómetro a 128Hz.</div>
+        </div>
+        <ChevronRight size={20} color="var(--color-text-mute)" />
       </div>
     </div>
   );
-}
-
-// ==========================================
-// COMPONENTE: PANTALLA DE CAPTURA
-// ==========================================
-function CaptureScreen({ onBack, wsStatus, latestAccel }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const isRecordingRef = useRef(false);
-  const recordStartRef = useRef(0);
-  const poseBufferRef = useRef([]);
-  
-  const [isModelLoaded, setIsModelLoaded] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordedVideoUrl, setRecordedVideoUrl] = useState(null);
-  const [metrics, setMetrics] = useState(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [metricsError, setMetricsError] = useState(null);
-  
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-
-  const BONES = [
-    [5, 7], [7, 9], [6, 8], [8, 10], [5, 6],
-    [5, 11], [6, 12], [11, 12], [11, 13], [13, 15], [12, 14], [14, 16]
-  ];
-
-  useEffect(() => {
-    let detector;
-    let animationFrameId;
-
-    const setupAI = async () => {
-      await tf.ready();
-      const detectorConfig = { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING };
-      detector = await poseDetection.createDetector(poseDetection.SupportedModels.MoveNet, detectorConfig);
-      setIsModelLoaded(true);
-      startCamera();
-    };
-
-    const startCamera = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play();
-            if (canvasRef.current) {
-              canvasRef.current.width = videoRef.current.videoWidth;
-              canvasRef.current.height = videoRef.current.videoHeight;
-            }
-            detectPose();
-          };
-        }
-      } catch (e) {
-        console.error("Error cámara:", e);
-      }
-    };
-
-    const detectPose = async () => {
-      if (!detector || !videoRef.current || !canvasRef.current) return;
-      try {
-        const poses = await detector.estimatePoses(videoRef.current);
-        drawSkeleton(poses);
-        if (isRecordingRef.current && poses.length > 0) {
-          const kps = poses[0].keypoints;
-          const t = (performance.now() - recordStartRef.current) / 1000;
-          poseBufferRef.current.push({
-            t, keypoints: kps.map((kp) => ({ x: kp.x, y: kp.y, z: 0, score: kp.score }))
-          });
-        }
-      } catch (error) {}
-      animationFrameId = requestAnimationFrame(detectPose);
-    };
-
-    const drawSkeleton = (poses) => {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      ctx.strokeStyle = '#00ffff'; 
-      ctx.fillStyle = '#00ff00';
-      ctx.lineWidth = 5;
-
-      if (poses.length > 0) {
-        const keypoints = poses[0].keypoints;
-        BONES.forEach(([i, j]) => {
-          const kp1 = keypoints[i];
-          const kp2 = keypoints[j];
-          if (kp1.score > 0.3 && kp2.score > 0.3) {
-            ctx.beginPath(); ctx.moveTo(kp1.x, kp1.y); ctx.lineTo(kp2.x, kp2.y); ctx.stroke();
-          }
-        });
-        keypoints.forEach((kp) => {
-          if (kp.score > 0.3) {
-            ctx.beginPath(); ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI); ctx.fill();
-          }
-        });
-      }
-    };
-
-    setupAI();
-    return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      const stream = videoRef.current?.srcObject;
-      if (stream) stream.getTracks().forEach(t => t.stop());
-    };
-  }, []);
-
-  const startRecording = () => {
-    if (!canvasRef.current) return;
-    chunksRef.current = [];
-    poseBufferRef.current = [];
-    recordStartRef.current = performance.now();
-    isRecordingRef.current = true;
-    setRecordedVideoUrl(null); setMetrics(null); setMetricsError(null); setIsRecording(true);
-
-    const canvasStream = canvasRef.current.captureStream(30);
-    const mediaRecorder = new MediaRecorder(canvasStream);
-    mediaRecorderRef.current = mediaRecorder;
-
-    mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-    mediaRecorder.onstop = async () => {
-      isRecordingRef.current = false;
-      const blob = new Blob(chunksRef.current, { type: 'video/webm' });
-      setRecordedVideoUrl(URL.createObjectURL(blob));
-
-      const frames = poseBufferRef.current;
-      if (frames.length < 2) { setMetricsError('Muy pocas poses capturadas.'); return; }
-      setMetricsLoading(true);
-      try {
-        const res = await fetch(`${API_BASE}/analyze-pose-session`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ frames }),
-        });
-        const text = await res.text();
-        if (!res.ok) throw new Error(text || res.statusText);
-        setMetrics(JSON.parse(text));
-      } catch (e) {
-        setMetricsError(e.message || 'Error en el servidor Python.');
-      } finally {
-        setMetricsLoading(false);
-      }
-    };
-
-    mediaRecorder.start();
-    setTimeout(() => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-        setIsRecording(false);
-      }
-    }, 10000); 
-  };
 
   return (
-    <div style={{ backgroundColor: '#0a0a0a', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px', color: 'white', fontFamily: 'monospace', overflowY: 'auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '640px', alignItems: 'center' }}>
-        <h2>CAPTURA DIGITAL</h2>
-        <button onClick={onBack} style={{ padding: '8px 15px', background: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}>⬅ VOLVER</button>
-      </div>
+    <div className="app-shell" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--color-bg)', color: 'var(--color-text)' }}>
+      {view === 'launcher' && renderHeader()}
+      {view === 'launcher' && renderLauncher()}
       
-      {!isModelLoaded ? (
-        <div style={{ color: '#00ffff', marginTop: '20px' }}>⏳ Cargando redes neuronales...</div>
-      ) : (
-        <div style={{ width: '100%', maxWidth: '640px', display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: '20px' }}>
-          
-          <button 
-            onClick={startRecording} disabled={isRecording}
-            style={{ 
-              marginBottom: '20px', padding: '15px 30px', fontSize: '1.2rem', fontWeight: 'bold', cursor: isRecording ? 'not-allowed' : 'pointer',
-              backgroundColor: isRecording ? '#ff0000' : '#00ffff', color: isRecording ? '#fff' : '#000',
-              border: 'none', borderRadius: '50px', boxShadow: isRecording ? '0 0 20px #ff0000' : '0 0 15px #00ffff'
-            }}
-          >
-            {isRecording ? '🔴 GRABANDO (10s)...' : '⏺ GRABAR GEMELO DIGITAL'}
-          </button>
+      {view === 'dashboard' && (
+        <Dashboard 
+          onBack={() => setView('launcher')} 
+          wsStatus={wsStatus} 
+          latestAccel={latestAccel} 
+        />
+      )}
 
-          {/* Panel de estado del WebSocket gestionado en App.js */}
-          <div style={{ marginBottom: '20px', padding: '15px', background: '#111', borderRadius: '8px', width: '100%', textAlign: 'center', border: `2px solid ${wsStatus === 'Conectado' ? '#0f0' : '#f00'}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              <div>📡 Estado Global:</div>
-              <div style={{ color: wsStatus === 'Conectado' ? '#0f0' : '#f88' }}>{wsStatus}</div>
-            </div>
-            <div style={{ fontSize: '14px', marginTop: '4px', fontFamily: 'monospace', background: '#000', padding: '5px', borderRadius: '4px' }}>
-              📊 Acelerómetro: X={latestAccel.x.toFixed(3)} | Y={latestAccel.y.toFixed(3)} | Z={latestAccel.z.toFixed(3)}
-            </div>
-          </div>
+      {view === 'ar' && (
+        <ARGuide onBack={() => setView('launcher')} />
+      )}
 
-          <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden', border: isRecording ? '4px solid #ff0000' : '2px solid #333' }}>
-            <video ref={videoRef} playsInline muted style={{ transform: 'scaleX(-1)', display: 'block', maxWidth: '100%' }} />
-            <canvas ref={canvasRef} style={{ position: 'absolute', top: 0, left: 0, transform: 'scaleX(-1)', width: '100%', height: '100%' }} />
-          </div>
-
-          {metricsLoading && <p style={{ marginTop: '24px', color: '#00ffff' }}>⏳ Calculando biomarcadores...</p>}
-          {metricsError && <p style={{ marginTop: '24px', color: '#ff6666' }}>{metricsError}</p>}
-          {recordedVideoUrl && (
-            <div style={{ marginTop: '40px', width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-              <h3 style={{ color: '#00ff00' }}>✅ Análisis Grabado</h3>
-              <video src={recordedVideoUrl} controls autoPlay loop style={{ width: '100%', maxWidth: '400px', borderRadius: '10px' }} />
-            </div>
-          )}
-        </div>
+      {view === 'capture' && (
+        <CaptureScreen 
+          onBack={() => setView('launcher')} 
+          wsStatus={wsStatus} 
+          latestAccel={latestAccel} 
+        />
       )}
     </div>
   );
